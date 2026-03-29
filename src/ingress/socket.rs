@@ -1,8 +1,7 @@
 // src/ingress/socket.rs
 
-use tokio::net::TcpListener;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio_util::codec::{Framed, FramedRead, LinesCodec};
+use tokio::net::{TcpListener, TcpStream};
+use tokio_util::codec::{Framed, LinesCodec};
 use futures::{StreamExt, SinkExt}; // Para el .next() del stream
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -25,7 +24,6 @@ enum ServerCommand {
 
 // El estado compartido que guardará todos los canales de retorno
 type ServerRegistry = Arc<Mutex<HashMap<u16, mpsc::Sender<ServerCommand>>>>;
-
 #[derive(Deserialize, Debug)]
 struct Message {
     //id: u32,
@@ -39,10 +37,15 @@ struct ResponseTcp {
     value: String,
 }
 
+// #[derive(Deserialize, Serialize, Debug)]
+// struct ResponseSocket {
+//     command: String,
+//     value: String,
+// }
+
 pub async fn start() -> Result<(), Box<dyn std::error::Error>> {
     let (central_tx, mut central_rx) = mpsc::channel::<CentralEvent>(100);
     let registry: ServerRegistry = Arc::new(Mutex::new(HashMap::new()));
-
 
     let registry_for_central = Arc::clone(&registry);
     let central_tx_clone = central_tx.clone();
@@ -52,28 +55,28 @@ pub async fn start() -> Result<(), Box<dyn std::error::Error>> {
         while let Some(event) = central_rx.recv().await {
             match event {
                 CentralEvent::Register { port, tx } => {
-                    println!("🧠 Central: Registrando servidor en puerto {}", port);
+                    println!("  Central: Registrando servidor en puerto {}", port);
                     let mut reg = registry_for_central.lock().await;
                     reg.insert(port, tx);
                 }
                 CentralEvent::Alert { port, msg } => {
-                    println!("📢 Alerta de [{}]: {}", port, msg);
+                    println!("  Alerta de [{}]: {}", port, msg);
                     
                     // EJEMPLO DE VUELTA: Si recibimos una alerta, enviamos un mensaje de confirmación
                     let reg = registry_for_central.lock().await;
                     if let Some(server_tx) = reg.get(&port) {
                         let _ = server_tx.send(ServerCommand::SendMessage {
-                            text: "Recibido, buen trabajo.".to_string()
+                            text: format!("msg: {} ", msg)
                         }).await;
                     }
                 }
                 CentralEvent::New { address, port } => {
-                    println!("New channel {} -> 127.0.0.1:{}", address, port);
+                    println!("New channel 127.0.0.1:{} create connection with {}", port, address);
 
                     let tx = central_tx_clone.clone();
                     let reg = Arc::clone(&registry_for_central);
                     tokio::spawn(async move {
-                        if let Err(e) = start_managed_server(tx, reg).await {
+                        if let Err(e) = start_managed_server(tx, reg, 0, false, address).await {
                             eprintln!("Error en servidor hijo: {}", e);
                         }
                     });
@@ -82,16 +85,14 @@ pub async fn start() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // Lanzar los 20 servidores pasándoles el registro y el canal central
-    for _ in 0..20 {
-        let tx = central_tx.clone();
-        let reg = Arc::clone(&registry);
-        tokio::spawn(async move {
-            if let Err(e) = start_managed_server(tx, reg).await {
-                eprintln!("Error en servidor: {}", e);
-            }
-        });
-    }
+    
+    let tx = central_tx.clone();
+    let reg = Arc::clone(&registry);
+    tokio::spawn(async move {
+        if let Err(e) = start_managed_server(tx, reg, 12012, true, "".to_string()).await {
+            eprintln!("Error en servidor: {}", e);
+        }
+    });
 
     tokio::signal::ctrl_c().await?;
     Ok(())
@@ -99,77 +100,102 @@ pub async fn start() -> Result<(), Box<dyn std::error::Error>> {
 
 async fn start_managed_server(
     central_tx: mpsc::Sender<CentralEvent>,
-    registry: ServerRegistry,
+    _registry: ServerRegistry, // Mantener si se usa en otro lado, sino ignorar
+    port: u16,
+    is_main: bool,
+    response_address: String, // Dirección a donde este server responde/envía
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let _ = registry;
     
-    let listener = TcpListener::bind("127.0.0.1:0").await?;
-    let port = listener.local_addr()?.port();
+    let listener = TcpListener::bind(format!("127.0.0.1:{}", port)).await?;
+    let actual_port = listener.local_addr()?.port(); 
 
-    // Creamos el canal por el cual este servidor recibirá órdenes
+    // Creamos el canal para recibir órdenes de la Central
     let (server_tx, mut server_rx) = mpsc::channel::<ServerCommand>(10);
 
-    // 1. REGISTRO: Enviamos nuestro canal de retorno a la Central
+    // 1. Registro en la Central
     central_tx.send(CentralEvent::Register { 
-        port, 
+        port: actual_port, 
         tx: server_tx 
     }).await?;
 
-    // 2. TASK DE ESCUCHA (Vueltas de la Central)
-    // Este bloque procesa lo que el "Cerebro" nos mande
+    // 2. TASK DE ESCUCHA DE LA CENTRAL (Vueltas)
+    // Esta tarea ahora puede enviar mensajes al exterior
+    let response_address_clone = response_address.clone();
     tokio::spawn(async move {
         while let Some(command) = server_rx.recv().await {
             match command {
                 ServerCommand::SendMessage { text } => {
-                    println!("[Servidor {}] La central dice: {}", port, text);
-                    // Aquí podrías enviar esto a los clientes conectados si quisieras
+                    println!("[Servidor {}] Orden de envío recibida: {}", actual_port, text);
+                    
+                    // Si no es el main, intentamos enviar el mensaje al response_address
+                    if !is_main {
+                        match TcpStream::connect(&response_address_clone).await {
+                            Ok(stream) => {
+                                let mut framed = Framed::new(stream, LinesCodec::new());
+                                // Enviamos el texto envuelto en un JSON o como línea cruda
+                                if let Err(e) = framed.send(&text).await {
+                                    eprintln!("Error al reenviar mensaje: {}", e);
+                                }
+                            }
+                            Err(e) => eprintln!("No se pudo conectar a {}: {}", response_address_clone, e),
+                        }
+                    }
                 }
             }
         }
     });
 
-    // 3. LOOP DE ACEPTACIÓN (Igual que antes)
+    println!("[Servidor {}] Modo Main: {} | Operativo.", actual_port, is_main);
+
+    // 3. LOOP DE ACEPTACIÓN
     loop {
         let (socket, addr) = listener.accept().await?;
         let tx_clone = central_tx.clone();
-        
+        // let is_main_flag = is_main;
+
         tokio::spawn(async move {
             let _ = tx_clone.send(CentralEvent::Alert { 
-                port, 
+                port: actual_port, 
                 msg: format!("Cliente {} conectado", addr) 
             }).await;
             
             let mut framed = Framed::new(socket, LinesCodec::new());
-            
 
             while let Some(result) = framed.next().await {
                 match result {
                     Ok(linea) => {
-                        println!("[Servidor {}] Datos crudos: {}", port, linea);
-
                         if let Ok(req) = serde_json::from_str::<Message>(&linea) {
-                            let (cmd, val) = match req.command.as_str() {
-                                "status"     => ("REPORT".to_string(), "OK".to_string()),
-                                "echo"       => ("ECHO".to_string(), req.value), 
-                                "newchannel" => {
-                                    let _ = tx_clone.send(CentralEvent::New {address: req.value, port}).await;
-                                    let _ = framed.send("Creando nuevo servidor dinámico...").await;
-                                    return ()
+                            
+                            match req.command.as_str() {
+                                "status" => {
+                                    let resp = ResponseTcp { command: "REPORT".into(), value: "OK".into() };
+                                    let _ = framed.send(serde_json::to_string(&resp).unwrap()).await;
                                 },
-                                _            => ("UNKNOWN".to_string(), "Comando inválido".to_string()),
-                            };
-
-                            let resp = ResponseTcp { command: cmd.to_string(), value: val.to_string() };
-
-                            if let Ok(json_resp) = serde_json::to_string(&resp) {
-                                if let Err(e) = framed.send(json_resp).await {
-                                    eprintln!("Error al enviar: {}", e);
+                                "newchannel" => {
+                                    // Solo si el protocolo lo permite o si es el main
+                                    let _ = tx_clone.send(CentralEvent::New { 
+                                        address: req.value, 
+                                        port: actual_port 
+                                    }).await;
+                                    let _ = framed.send("Comando New enviado a Central").await;
+                                    return; 
+                                },
+                                "forward_to_central" => {
+                                    // Este comando hace que este server le pida a la central 
+                                    // que mande un mensaje a OTRO server usando SendMessage
+                                    let _ = tx_clone.send(CentralEvent::Alert { 
+                                        port: actual_port, 
+                                        msg: format!("RETRANSMIT: {}", req.value) 
+                                    }).await;
+                                },
+                                _ => {
+                                    let _ = framed.send("Comando desconocido").await;
                                 }
                             }
                         }
                     }
                     Err(e) => {
-                        eprintln!("Conexión perdida con {}: {}", addr, e);
+                        eprintln!("Conexión cerrada con {}: {}", addr, e);
                         break;
                     }
                 }
@@ -177,3 +203,4 @@ async fn start_managed_server(
         });
     }
 }
+
