@@ -8,6 +8,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 
+use crate::KnotMessage;
+
 // Mensajes que el SERVIDOR envía a la CENTRAL
 #[derive(Debug)]
 enum CentralEvent {
@@ -43,12 +45,16 @@ struct ResponseTcp {
 //     value: String,
 // }
 
-pub async fn start() -> Result<(), Box<dyn std::error::Error>> {
+pub async fn start(mut rx: mpsc::Receiver<Vec<u8>>, hub_tx: mpsc::Sender<KnotMessage>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let (central_tx, mut central_rx) = mpsc::channel::<CentralEvent>(100);
     let registry: ServerRegistry = Arc::new(Mutex::new(HashMap::new()));
 
     let registry_for_central = Arc::clone(&registry);
     let central_tx_clone = central_tx.clone();
+
+    // TASK HUB
+
+
 
     // TASK CENTRAL: El controlador
     tokio::spawn(async move {
