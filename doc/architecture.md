@@ -18,3 +18,13 @@ El tercer Thread tendra la instancia de LibP2P y contara con funciones especific
 Worker A <- Core <- Worker B
 
 Definir
+
+
+
+## Channeling
+
+Un MCSP principal se encarga de recibir datos desde Ingress y Network. Otros dos canales MCSP se encargan de distribuir inversamente los datos, creando un modelo donde Ingress y Network solo puede comunicarse con Core, pero Core puede distribuir los datos actuando de Hub.
+
+El core debe determinar a donde reenviar los datos y de que forma. Actuando de mediador y los Workers de simples interfaces.
+
+
