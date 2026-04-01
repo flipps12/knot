@@ -1,5 +1,7 @@
 # Knot
 
+<a href="https://github.com/ImToru2/knot_cli">Knot-CLI</a>
+
 ### Description
 
 Knot is a peer-to-peer overlay network that enables direct communication between devices over the Internet without relying on central servers. It uses cryptographic identities to connect nodes and establish secure connections even behind NAT. Its goal is to provide a foundation for decentralized applications such as messaging, file sharing, and data synchronization.
