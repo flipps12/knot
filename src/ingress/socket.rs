@@ -20,7 +20,7 @@ enum CentralEvent {
     Alert { port: u16, msg: String },
     New { address: String, port: u16 },
     NewChannel { address: String, port: u16 },
-    RouteBinary { from_ip: String, frame: BinaryFrame,}    
+    RouteBinary { from_ip: String, frame: BinaryFrame }    
 }
 
 // Mensajes que la CENTRAL envía al SERVIDOR (Las "vueltas")
@@ -50,7 +50,7 @@ struct ResponseTcp {
 //     value: String,
 // }
 
-pub async fn start_ingress(mut rx: mpsc::Receiver<Vec<u8>>, hub_tx: mpsc::Sender<KnotMessage>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub async fn start_ingress(mut rx: mpsc::Receiver<Vec<u8>>, hub_tx: mpsc::Sender<KnotMessage>, port: u16, binary_port: u16) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let (central_tx, mut central_rx) = mpsc::channel::<CentralEvent>(100);
     let registry: ServerRegistry = Arc::new(Mutex::new(HashMap::new()));
 
@@ -107,10 +107,8 @@ pub async fn start_ingress(mut rx: mpsc::Receiver<Vec<u8>>, hub_tx: mpsc::Sender
                     println!("  Data form {} to {}", from_ip, frame.peer_id);
                     
                     // Aquí buscarías en tu Registro quién tiene ese PeerID y le mandas el SendRaw
-                    // let reg = registry.lock().await;
-                    // if let Some(server_tx) = reg.get(&target_peer_port_as_key) { 
-                    //     let _ = server_tx.send(ServerCommand::SendRaw { data }).await;
-                    // }
+                    let _ = hub_tx.send(KnotMessage::ClientData { from_ip, frame }).await;
+                    
                 }
             }
         }
@@ -121,13 +119,13 @@ pub async fn start_ingress(mut rx: mpsc::Receiver<Vec<u8>>, hub_tx: mpsc::Sender
     let txx = central_tx.clone();
     let reg = Arc::clone(&registry);
     tokio::spawn(async move {
-        if let Err(e) = start_managed_server(tx, reg, 12012, true, "".to_string()).await {
+        if let Err(e) = start_managed_server(tx, reg, port, true, "".to_string()).await {
             eprintln!("Error en servidor: {}", e);
         }
     });
 
     tokio::spawn(async move {
-        if let Err(e) = start_binary_data_server(txx, 12812).await {
+        if let Err(e) = start_binary_data_server(txx, binary_port).await {
             eprintln!("Error en servidor: {}", e);
         }
     });
