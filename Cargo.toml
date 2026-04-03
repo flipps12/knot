@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+bytes = "1.11.1"
 futures = "0.3.32"
 libp2p = "0.56.0"
 serde = { version = "1.0.228", features = ["derive"] }
