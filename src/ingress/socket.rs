@@ -3,7 +3,7 @@
 use tokio::net::{TcpListener, TcpStream};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_util::codec::{Framed, LinesCodec, LengthDelimitedCodec};
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use futures::{StreamExt, SinkExt}; // Para el .next() del stream
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -104,6 +104,7 @@ pub async fn start_ingress(mut rx: mpsc::Receiver<Vec<u8>>, hub_tx: mpsc::Sender
                     });
                 }
                 CentralEvent::RouteBinary { from_ip, frame } => {
+                    #[cfg(debug_assertions)]
                     println!("  Data form {} to {}", from_ip, frame.peer_id);
                     
                     // Aquí buscarías en tu Registro quién tiene ese PeerID y le mandas el SendRaw
@@ -245,43 +246,51 @@ async fn start_managed_server(
 async fn start_binary_data_server(
     central_tx: mpsc::Sender<CentralEvent>,
     port: u16,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let listener = TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
     
-    println!("[Servidor {}] Started", port);
+    // Este log queda porque solo se ejecuta una vez al inicio
+    println!("[Servidor {}] Ingress Binario iniciado", port);
 
     loop {
         let (mut socket, addr) = listener.accept().await?;
         let tx = central_tx.clone();
 
-
-
         tokio::spawn(async move {
-            let mut header_buf = [0u8; 24]; // Ahora el header mide 16 bytes
+            let mut header_buf = [0u8; 24];
+            // Reservamos capacidad inicial para evitar allocs pequeños
+            let mut payload_buffer = BytesMut::with_capacity(65536); 
 
             loop {
                 // 1. Leer Header
                 if socket.read_exact(&mut header_buf).await.is_err() { break; }
 
-                // 2. Extraer longitud del payload (está en los bytes 18 al 22)
+                // 2. Extraer longitud (Offset 18-22 según tu framing.rs)
                 let len = u32::from_be_bytes(header_buf[18..22].try_into().unwrap()) as usize;
 
-                // 3. Leer Payload directamente a un buffer de bytes
-                let mut payload_raw = vec![0u8; len];
-                if socket.read_exact(&mut payload_raw).await.is_err() { break; }
+                // 3. Optimización de Memoria: Leer directamente al Buffer
+                payload_buffer.resize(len, 0); 
+                if socket.read_exact(&mut payload_buffer).await.is_err() { break; }
                 
-                // 4. Convertir a Bytes (Zero-Copy para el envío)
-                let payload_bytes = Bytes::from(payload_raw);
+                // freeze() convierte BytesMut en Bytes (atómico y sin copia)
+                let payload_bytes = payload_buffer.split_to(len).freeze();
 
-                // 5. Construir el Frame usando su propio método
+                // 4. Construir el Frame
                 let frame = BinaryFrame::from_raw(&header_buf, payload_bytes);
 
-                // 6. Enviar el objeto completo a la Central
-                // El envío de 'frame' no copia el payload, solo el puntero
-                let _ = tx.send(CentralEvent::RouteBinary {
+                // 5. Logs solo en modo DEBUG (No afectan al benchmark --release)
+                #[cfg(debug_assertions)]
+                println!("[Ingress] Data de {} para ID: {}", addr, frame.peer_id);
+
+
+                // For benchmark only
+                if socket.write_u8(1).await.is_err() { break; }
+
+                // 6. Enviar a la Central
+                if tx.send(CentralEvent::RouteBinary {
                     from_ip: addr.to_string(),
-                    frame, // Enviamos la estructura completa
-                }).await;
+                    frame,
+                }).await.is_err() { break; }
             }
         });
     }
