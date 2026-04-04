@@ -1,5 +1,6 @@
 // src/ingress/socket.rs
 
+use serde::de::value;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_util::codec::{Framed, LinesCodec, LengthDelimitedCodec};
@@ -16,9 +17,7 @@ use crate::utils::framing::BinaryFrame;
 // Mensajes que el SERVIDOR envía a la CENTRAL
 #[derive(Debug)]
 enum CentralEvent {
-    Register { port: u16, tx: mpsc::Sender<ServerCommand> },
-    Alert { port: u16, msg: String },
-    New { address: String, port: u16 },
+    Register { app_id: u64, port: u16 },
     NewChannel { address: String, port: u16 },
     RouteBinary { from_ip: String, frame: BinaryFrame }    
 }
@@ -30,12 +29,13 @@ enum ServerCommand {
 }
 
 // El estado compartido que guardará todos los canales de retorno
-type ServerRegistry = Arc<Mutex<HashMap<u16, mpsc::Sender<ServerCommand>>>>;
+type ServerRegistry = Arc<Mutex<HashMap<u64, u16>>>;
 #[derive(Deserialize, Debug)]
 struct Message {
     //id: u32,
     command: String,
     value: String,
+    port: u16,
 }
 
 #[derive(Serialize, Debug)]
@@ -44,53 +44,71 @@ struct ResponseTcp {
     value: String,
 }
 
+pub enum IngressCommand {
+    SendFrameToClient { 
+        from_ip: String, 
+        frame: Bytes 
+    },
+}
+
+type ConnectionMap = Arc<Mutex<HashMap<u16, mpsc::Sender<Bytes>>>>;
+
 // #[derive(Deserialize, Serialize, Debug)]
 // struct ResponseSocket {
 //     command: String,
 //     value: String,
 // }
 
-pub async fn start_ingress(mut rx: mpsc::Receiver<Vec<u8>>, hub_tx: mpsc::Sender<KnotMessage>, port: u16, binary_port: u16) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub async fn start_ingress(mut rx: mpsc::Receiver<IngressCommand>, hub_tx: mpsc::Sender<KnotMessage>, port: u16, binary_port: u16) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let (central_tx, mut central_rx) = mpsc::channel::<CentralEvent>(100);
     let registry: ServerRegistry = Arc::new(Mutex::new(HashMap::new()));
 
     let registry_for_central = Arc::clone(&registry);
     let central_tx_clone = central_tx.clone();
 
-    // TASK HUB
+    let local_connections: ConnectionMap = Arc::new(Mutex::new(HashMap::new()));
 
+    // TASK HUB
+    let conns = Arc::clone(&local_connections);
+    tokio::spawn(async move {
+        while let Some(event) = rx.recv().await {
+            match event {
+                IngressCommand::SendFrameToClient { from_ip, frame } => {
+                    let buf = BytesMut::from(&frame[..]);
+                    if buf.len() < 24 {
+                        eprintln!("Error: El frame es demasiado corto para el encabezado de Knot");
+                        return;
+                    }
+                    let decoded_frame = BinaryFrame::decode(buf);
+                    let app_id = decoded_frame.app_id;
+
+
+                    #[cfg(debug_assertions)]
+                    println!("Entrante desde {} hasta appid: {}", from_ip, app_id);
+
+                    let reg = registry_for_central.lock().await;
+                    if let Some(&target_port) = reg.get(&app_id) {
+                        println!("  -> Reenviando a aplicación local en puerto: {}", target_port);
+                        send_to_local_app(Arc::clone(&conns), target_port, decoded_frame.payload).await;
+                    } else {
+                        println!("  -> AppID {} no está registrada.", app_id);
+                    }
+                }
+            }
+        }
+    });
 
 
     // TASK CENTRAL: El controlador
+    let registry_for_hub = Arc::clone(&registry);
     tokio::spawn(async move {
+        let reg_handle = Arc::clone(&registry_for_hub);
         while let Some(event) = central_rx.recv().await {
             match event {
-                CentralEvent::Register { port, tx } => {
-                    println!("  Central: Registrando servidor en puerto {}", port);
-                    let mut reg = registry_for_central.lock().await;
-                    reg.insert(port, tx);
-                }
-                CentralEvent::Alert { port, msg } => {
-                    println!("  Alerta de [{}]: {}", port, msg);
-                    
-                    // EJEMPLO DE VUELTA: Si recibimos una alerta, enviamos un mensaje de confirmación
-                    let reg = registry_for_central.lock().await;
-                    if let Some(server_tx) = reg.get(&port) {
-                        let _ = server_tx.send(ServerCommand::SendMessage {
-                            text: format!("msg: {} ", msg)
-                        }).await;
-                    }
-                }
-                CentralEvent::New { address, port } => {
-                    println!("New channel 127.0.0.1:{} create connection with {}", port, address);
-
-                    let tx = central_tx_clone.clone();
-                    let reg = Arc::clone(&registry_for_central);
-                    tokio::spawn(async move {
-                        if let Err(e) = start_managed_server(tx, reg, 0, false, address).await {
-                            eprintln!("Error en servidor hijo: {}", e);
-                        }
-                    });
+                CentralEvent::Register { app_id, port } => {
+                    println!("[Ingress] new appname on hashmap: {} -> {}", app_id, port);
+                    let mut reg = reg_handle.lock().await;
+                    reg.insert(app_id, port);
                 }
                 CentralEvent::NewChannel { address, port } => {
                     // println!("New datachannel 127.0.0.1:{} create connection with {}", port, address);
@@ -183,12 +201,7 @@ async fn start_managed_server(
         let tx_clone = central_tx.clone();
         // let is_main_flag = is_main;
 
-        tokio::spawn(async move {
-            let _ = tx_clone.send(CentralEvent::Alert { 
-                port: port, 
-                msg: format!("Cliente {} conectado", addr) 
-            }).await;
-            
+        tokio::spawn(async move {            
             let mut framed = Framed::new(socket, LinesCodec::new());
 
             while let Some(result) = framed.next().await {
@@ -201,32 +214,20 @@ async fn start_managed_server(
                                     let resp = ResponseTcp { command: "REPORT".into(), value: "OK".into() };
                                     let _ = framed.send(serde_json::to_string(&resp).unwrap()).await;
                                 },
-                                "newchannel" => {
-                                    // Solo si el protocolo lo permite o si es el main
-                                    let _ = tx_clone.send(CentralEvent::New { 
-                                        address: req.value, 
-                                        port: port 
-                                    }).await;
-                                    let _ = framed.send("Comando New enviado a Central").await;
+                                "newappname" => {
+                                    
+                                    let app_id = string_to_u64_rust(&req.value); 
+                                    let _ = tx_clone.send(CentralEvent::Register { app_id, port: req.port }).await;let _ = framed.send("Ok").await;
+                                    
+                                    let response_text = format!("OK: Registered ID {}", app_id);
+                                    let _ = framed.send(response_text).await;
                                     return; 
                                 },
-                                "newdatachannel" => {
-                                    // Solo si el protocolo lo permite o si es el main
-                                    let _ = tx_clone.send(CentralEvent::NewChannel { 
-                                        address: req.value, 
-                                        port: 0
-                                    }).await;
-                                    let _ = framed.send("Comando NewData enviado a Central").await;
-                                    return; 
-                                },
-                                "forward_to_central" => {
-                                    // Este comando hace que este server le pida a la central 
-                                    // que mande un mensaje a OTRO server usando SendMessage
-                                    let _ = tx_clone.send(CentralEvent::Alert { 
-                                        port: port, 
-                                        msg: format!("RETRANSMIT: {}", req.value) 
-                                    }).await;
-                                },
+                                // "getappname" => {
+                                    
+                                //     let _ = framed.send("Comando New enviado a Central").await;
+                                //     return; 
+                                // },
                                 _ => {
                                     let _ = framed.send("Comando desconocido").await;
                                 }
@@ -293,5 +294,53 @@ async fn start_binary_data_server(
                 }).await.is_err() { break; }
             }
         });
+    }
+}
+
+fn string_to_u64_rust(text: &str) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut s = DefaultHasher::new();
+    text.hash(&mut s);
+    s.finish()
+}
+
+pub async fn send_to_local_app(
+    connections: ConnectionMap,
+    port: u16,
+    data: Bytes
+) {
+    let mut lock = connections.lock().await;
+
+    // 1. Intentar obtener el canal existente
+    if let Some(tx) = lock.get(&port) {
+        if tx.send(data.clone()).await.is_ok() {
+            return; // Enviado con éxito
+        }
+        // Si el canal falló (socket cerrado), lo sacamos del mapa
+        lock.remove(&port);
+    }
+
+    // 2. Si no hay conexión o falló, abrimos una nueva
+    match TcpStream::connect(format!("127.0.0.1:{}", port)).await {
+        Ok(mut stream) => {
+            let (tx, mut rx) = mpsc::channel::<Bytes>(100);
+            
+            // Guardamos el canal en el mapa antes de lanzar el hilo
+            lock.insert(port, tx.clone());
+            
+            // Tarea de fondo: Escribe en el socket mientras el canal reciba datos
+            tokio::spawn(async move {
+                while let Some(payload) = rx.recv().await {
+                    if let Err(_) = stream.write_all(&payload).await {
+                        break; // Error de red, cerramos esta tarea
+                    }
+                }
+            });
+
+            // Enviamos el primer paquete (el que disparó la conexión)
+            let _ = lock.get(&port).unwrap().send(data).await;
+        }
+        Err(e) => eprintln!("[Error] No se pudo conectar al puerto {}: {}", port, e),
     }
 }

@@ -4,7 +4,7 @@ mod network;
 mod core;
 mod utils;
 
-use crate::ingress::socket::start_ingress;
+use crate::ingress::socket::{IngressCommand, start_ingress};
 use crate::network::swarm::{NetworkCommand, NetworkResponse, start_network};
 use crate::utils::framing::BinaryFrame;
 
@@ -30,6 +30,8 @@ async fn main() {
 
     // for benchamrk 
     let mut count = 0;
+    let mut count_rec = 0;
+
     // Args for ports
     let args: Vec<String> = env::args().collect();
 
@@ -58,7 +60,7 @@ async fn main() {
     // Core -> Network
     let (to_net_tx, to_net_rx) = mpsc::channel::<NetworkCommand>(10000);
     // Core -> Ingress
-    let (to_ing_tx, to_ing_rx) = mpsc::channel::<Vec<u8>>(10000);
+    let (to_ing_tx, to_ing_rx) = mpsc::channel::<IngressCommand>(10000);
 
     // Clone rx - tx
     // for Ingress
@@ -91,6 +93,18 @@ async fn main() {
                         // 3. Enviamos el comando a la red
                         let _ = to_net_tx.send(NetworkCommand::SendFrame { 
                             target_u64, 
+                            frame: frame.encode()
+                        }).await;
+                    }
+                    KnotMessage::NetworkData { from_ip, frame } => {
+                        // for benchmark
+                        count_rec += 1;
+                        if count_rec % 10000 == 0 {
+                            println!("[Core] Frames procesados: {}", count_rec);
+                        }
+
+                        let _ = to_ing_tx.send(IngressCommand::SendFrameToClient { 
+                            from_ip, 
                             frame: frame.encode()
                         }).await;
                     }
