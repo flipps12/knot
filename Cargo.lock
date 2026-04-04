@@ -10,6 +10,7 @@ dependencies = [
  "bytes",
  "futures",
  "libp2p",
+ "libp2p-quic",
  "serde",
  "serde_json",
  "tokio",
