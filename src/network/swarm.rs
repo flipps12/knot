@@ -154,12 +154,26 @@ async fn run_network(
     let local_peer_id = PeerId::from(local_key.public());
     println!("[Network] Local Peer ID: {}", local_peer_id);
 
+    let mut quic_config = libp2p_quic::Config::new(&local_key);
+
+    // 10MB de margen para que los frames grandes fluyan sin pausas
+    quic_config.max_stream_data = 10_485_760;     // 10MB por cada stream individual
+    quic_config.max_connection_data = 15_728_640; // 15MB total de la conexión (agregado)
+    quic_config.max_idle_timeout = 30_000;
+
     // ── 2. Swarm con QUIC ───────────────────────────────────────────────
     // SwarmBuilder::with_existing_identity toma el keypair y configura
     // el transporte QUIC automáticamente (TLS 1.3 integrado, 0-RTT).
+    // ── 2. Swarm con QUIC Tuned ───────────────────────────────────────────
     let mut swarm = SwarmBuilder::with_existing_identity(local_key)
         .with_tokio()
-        .with_quic()                              // QUIC sobre UDP, cifrado nativo
+        // ESTO ES LO QUE CAMBIA: Usamos el método específico de QUIC
+        .with_quic_config(|mut config| {
+            config.max_stream_data = 10_485_760;     // 10MB por stream
+            config.max_connection_data = 15_728_640; // 15MB total conexión
+            config.max_idle_timeout = 30_000;        // 30 segundos
+            config
+        })
         .with_behaviour(|key| {
             let peer_id = PeerId::from(key.public());
 
@@ -168,7 +182,6 @@ async fn run_network(
                 peer_id,
                 kad::store::MemoryStore::new(peer_id),
             );
-            // Modo servidor: este nodo responde a queries de otros
             kademlia.set_mode(Some(kad::Mode::Server));
 
             // Identify
@@ -184,7 +197,7 @@ async fn run_network(
                     request_response::ProtocolSupport::Full,
                 )],
                 request_response::Config::default()
-                    .with_request_timeout(Duration::from_secs(10))
+                    .with_request_timeout(Duration::from_secs(20)) // Subimos a 20s
                     .with_max_concurrent_streams(1000),
             );
 
