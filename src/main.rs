@@ -19,6 +19,7 @@ pub enum KnotMessage {
     ClientData { from_ip: String, frame: BinaryFrame },
     ConnectToNetwork { addr: String },
     DiscoverNetwork { peerid: String },
+    GetPeersNetwork,
     // Del Network al Core: "Recibí algo del P2P"
     NetworkData { from_ip: String, frame: BinaryFrame },
     NetworkResponse(NetworkResponse),
@@ -107,6 +108,9 @@ async fn main() {
                         let peerid_parsed: PeerId = peerid.parse().expect("Invalid Addr");
                         let _ = to_net_tx.send(NetworkCommand::LookupPeer(peerid_parsed)).await;
                     }
+                    KnotMessage::GetPeersNetwork => {
+                        let _ = to_net_tx.send(NetworkCommand::GetPeers).await;
+                    }
                     KnotMessage::NetworkData { from_ip, frame } => {
                         // for benchmark
                         count_rec += 1;
@@ -119,6 +123,16 @@ async fn main() {
                             frame: frame.encode()
                         }).await;
                     }
+                    KnotMessage::NetworkResponse(response) => {
+                        match response {
+                            NetworkResponse::PeersList(list) => {
+                                println!("{:?}", list);
+                            }
+                            NetworkResponse::CommandAccepted => {
+                                // unused
+                            }
+                        }
+                    }
                     KnotMessage::Log(msg) => {
                         println!("[LOG GLOBAL]: {}", msg);
                     }
@@ -126,7 +140,6 @@ async fn main() {
                         println!("Apagando Knot...");
                         break;
                     }
-                    _ => {}
                 }
             }
             _ = tokio::signal::ctrl_c() => {

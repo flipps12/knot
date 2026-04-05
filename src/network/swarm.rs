@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use bytes::{Bytes, BytesMut};
 use serde::{Deserialize, Serialize};
 
-use crate::KnotMessage;
+use crate::{KnotMessage, utils::tou64::peer_id_to_u64};
 use crate::utils::framing::BinaryFrame;
 
 #[derive(Debug, Clone)]
@@ -133,7 +133,7 @@ type PeerTable = HashMap<PeerId, Vec<Multiaddr>>;
 // ─────────────────────────────────────────────
 
 pub async fn start_network(
-    mut rx: mpsc::Receiver<NetworkCommand>,
+    rx: mpsc::Receiver<NetworkCommand>,
     hub_tx: mpsc::Sender<KnotMessage>,
     port: u16
 ) {
@@ -260,46 +260,6 @@ async fn run_network(
     }
 
     Ok(())
-}
-
-// ─────────────────────────────────────────────
-//  Manejo de salida: Core → P2P
-// ─────────────────────────────────────────────
-
-fn handle_outbound(
-    swarm: &mut libp2p::Swarm<KnotBehaviour>,
-    peer_table: &PeerTable,
-    raw: Bytes,
-) {
-    // Los bytes que llegan del Core son un BinaryFrame ya encodado.
-    // Leemos el peer_id del header (bytes 2..10) para hacer routing.
-    if raw.len() < 24 {
-        eprintln!("[Network] Frame demasiado corto para routing: {} bytes", raw.len());
-        return;
-    }
-
-    let peer_id_u64 = u64::from_be_bytes(raw[2..10].try_into().unwrap());
-
-    // Buscar en peer_table algún PeerId cuyo hash coincida.
-    // En tu sistema, peer_id en el frame es el u64 del PeerId de libp2p
-    // (lo truncás al registrar). Buscamos coincidencia exacta.
-    let target = peer_table
-        .keys()
-        .find(|pid| peer_id_to_u64(pid) == peer_id_u64)
-        .copied();
-
-    match target {
-        Some(peer) => {
-            let request = FrameRequest { raw };
-            swarm.behaviour_mut().frames.send_request(&peer, request);
-            #[cfg(debug_assertions)]
-            println!("[Network] Frame enviado a {:?}", peer);
-        }
-        None => {
-            eprintln!("[Network] Sin ruta para peer_id={} (aún no descubierto)", peer_id_u64);
-            // Aquí podrías encolar el frame y reintentar tras descubrir el peer
-        }
-    }
 }
 
 // ─────────────────────────────────────────────
@@ -459,27 +419,6 @@ async fn handle_behaviour_event(
 // ─────────────────────────────────────────────
 //  Utilidades
 // ─────────────────────────────────────────────
-
-/// Trunca un PeerId a u64 para el campo peer_id del BinaryFrame.
-/// Se usa el hash del multihash subyacente.
-pub fn peer_id_to_u64(peer_id: &PeerId) -> u64 {
-    let bytes = peer_id.to_bytes();
-    // Tomar los últimos 8 bytes del digest
-    let start = bytes.len().saturating_sub(8);
-    let slice = &bytes[start..];
-    let mut arr = [0u8; 8];
-    arr[..slice.len()].copy_from_slice(slice);
-    u64::from_be_bytes(arr)
-}
-
-/// Conectar a un peer conocido por su dirección (bootstrap manual).
-/// Llámalo desde main si tenés peers semilla en config.
-pub fn dial_peer(swarm: &mut libp2p::Swarm<KnotBehaviour>, addr: Multiaddr) {
-    match swarm.dial(addr.clone()) {
-        Ok(_) => println!("[Network] Dial iniciado a {}", addr),
-        Err(e) => eprintln!("[Network] Error dial {}: {}", addr, e),
-    }
-}
 
 fn handle_outbound_by_u64(
     swarm: &mut libp2p::Swarm<KnotBehaviour>,
