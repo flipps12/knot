@@ -238,6 +238,7 @@ async fn run_network(
                         let _ = hub_tx.send(KnotMessage::NetworkResponse(NetworkResponse::PeersList(list))).await;
                     }
                     NetworkCommand::DialAddress(addr) => {
+                        println!("{}", addr);
                         let _ = swarm.dial(addr);
                     }
                     NetworkCommand::LookupPeer(peer_id) => {
@@ -313,24 +314,6 @@ async fn handle_swarm_event(
 ) {
     match event {
 
-        SwarmEvent::Behaviour(KnotBehaviourEvent::Mdns(mdns::Event::Discovered(list))) => {
-            for (peer_id, addr) in list {
-                println!("[Network] mDNS: Nuevo peer local hallado: {}", peer_id);
-                // Lo añadimos a Kademlia para que el ruteo sepa dónde está
-                swarm.behaviour_mut().kademlia.add_address(&peer_id, addr.clone());
-                // Lo registramos en nuestra tabla interna
-                peer_table.entry(peer_id).or_default().push(addr);
-            }
-        }
-        
-        // --- mDNS: Peer local se desconectó ---
-        SwarmEvent::Behaviour(KnotBehaviourEvent::Mdns(mdns::Event::Expired(list))) => {
-            for (peer_id, _addr) in list {
-                println!("[Network] mDNS: Peer local expirado: {}", peer_id);
-                // Opcional: limpiar de la tabla si quieres ser estricto
-            }
-        }
-
         // ── Conexión establecida ───────────────────────────────────────
         SwarmEvent::ConnectionEstablished { peer_id, endpoint, .. } => {
             println!("[Network] ✓ Conectado a {}", peer_id);
@@ -368,6 +351,25 @@ async fn handle_behaviour_event(
     hub_tx: &mpsc::Sender<KnotMessage>,
 ) {
     match event {
+
+        // --- mDNS: Peer discovered ---
+        KnotBehaviourEvent::Mdns(mdns::Event::Discovered(list)) => {
+            for (peer_id, addr) in list {
+                println!("[Network] mDNS: Nuevo peer local hallado: {}", peer_id);
+                // Lo añadimos a Kademlia para que el ruteo sepa dónde está
+                swarm.behaviour_mut().kademlia.add_address(&peer_id, addr.clone());
+                // Lo registramos en nuestra tabla interna
+                peer_table.entry(peer_id).or_default().push(addr);
+            }
+        }
+        
+        // --- mDNS: Peer expired ---
+        KnotBehaviourEvent::Mdns(mdns::Event::Expired(list)) => {
+            for (peer_id, _addr) in list {
+                println!("[Network] mDNS: Peer local expirado: {}", peer_id);
+                // Opcional: limpiar de la tabla si quieres ser estricto
+            }
+        }
 
         // ── Identify: peer se identifica → actualizar tabla ────────────
         KnotBehaviourEvent::Identify(identify::Event::Received { peer_id, info, connection_id: _ }) => {

@@ -18,6 +18,8 @@ use crate::utils::framing::BinaryFrame;
 #[derive(Debug)]
 enum CentralEvent {
     Register { app_id: u64, port: u16 },
+    Connect { addr: String },
+    Discover { peerid: String },
     NewChannel { address: String, port: u16 },
     RouteBinary { from_ip: String, frame: BinaryFrame }    
 }
@@ -109,6 +111,14 @@ pub async fn start_ingress(mut rx: mpsc::Receiver<IngressCommand>, hub_tx: mpsc:
                     println!("[Ingress] new appname on hashmap: {} -> {}", app_id, port);
                     let mut reg = reg_handle.lock().await;
                     reg.insert(app_id, port);
+                }
+                CentralEvent::Connect { addr } => {
+                    println!("[Ingress] Sending Connect command to [Network]: {}", addr);
+                    let _ = hub_tx.send(KnotMessage::ConnectToNetwork { addr }).await;
+                }
+                CentralEvent::Discover { peerid } => {
+                    println!("[Ingress] Sending Discover command to [Network]: {}", peerid);
+                    let _ = hub_tx.send(KnotMessage::DiscoverNetwork { peerid }).await;
                 }
                 CentralEvent::NewChannel { address, port } => {
                     // println!("New datachannel 127.0.0.1:{} create connection with {}", port, address);
@@ -217,17 +227,24 @@ async fn start_managed_server(
                                 "newappname" => {
                                     
                                     let app_id = string_to_u64_rust(&req.value); 
-                                    let _ = tx_clone.send(CentralEvent::Register { app_id, port: req.port }).await;let _ = framed.send("Ok").await;
+                                    let _ = tx_clone.send(CentralEvent::Register { app_id, port: req.port }).await;
                                     
                                     let response_text = format!("OK: Registered ID {}", app_id);
                                     let _ = framed.send(response_text).await;
                                     return; 
                                 },
-                                // "getappname" => {
-                                    
-                                //     let _ = framed.send("Comando New enviado a Central").await;
-                                //     return; 
-                                // },
+                                "connect" => {
+                                    let _ = tx_clone.send(CentralEvent::Connect { addr: req.value}).await;
+
+                                    let _ = framed.send("trying...").await;
+                                    return; 
+                                },
+                                "discover" => {
+                                    let _ = tx_clone.send(CentralEvent::Discover { peerid: req.value}).await;
+
+                                    let _ = framed.send("trying...").await;
+                                    return; 
+                                },
                                 _ => {
                                     let _ = framed.send("Comando desconocido").await;
                                 }

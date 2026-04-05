@@ -9,6 +9,7 @@ use crate::network::swarm::{NetworkCommand, NetworkResponse, start_network};
 use crate::utils::framing::BinaryFrame;
 
 use std::env;
+use libp2p::{Multiaddr, PeerId};
 use tokio::sync::mpsc;
 
 
@@ -16,6 +17,8 @@ use tokio::sync::mpsc;
 pub enum KnotMessage {
     // De Ingress al Core: "Tengo datos de un cliente"
     ClientData { from_ip: String, frame: BinaryFrame },
+    ConnectToNetwork { addr: String },
+    DiscoverNetwork { peerid: String },
     // Del Network al Core: "Recibí algo del P2P"
     NetworkData { from_ip: String, frame: BinaryFrame },
     NetworkResponse(NetworkResponse),
@@ -77,7 +80,7 @@ async fn main() {
         tokio::select! {
             Some(message) = hub_rx.recv() => {
                 match message {
-                    KnotMessage::ClientData { from_ip, frame } => {
+                    KnotMessage::ClientData { from_ip: _, frame } => {
                         // for benchmark
                         count += 1;
                         if count % 10000 == 0 {
@@ -95,6 +98,14 @@ async fn main() {
                             target_u64, 
                             frame: frame.encode()
                         }).await;
+                    }
+                    KnotMessage::ConnectToNetwork { addr } => {
+                        let addr_parsed: Multiaddr = addr.parse().expect("Invalid Addr");
+                        let _ = to_net_tx.send(NetworkCommand::DialAddress(addr_parsed)).await;
+                    }
+                    KnotMessage::DiscoverNetwork { peerid } => {
+                        let peerid_parsed: PeerId = peerid.parse().expect("Invalid Addr");
+                        let _ = to_net_tx.send(NetworkCommand::LookupPeer(peerid_parsed)).await;
                     }
                     KnotMessage::NetworkData { from_ip, frame } => {
                         // for benchmark
