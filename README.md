@@ -1,6 +1,6 @@
 # Knot
 
-<a href="https://github.com/ImToru2/knot_cli">Knot-CLI</a>
+<a href="https://github.com/ImToru2/knot_cli">Knot-CLI</a>  <a href="https://github.com/flipps12/knot-relay">Knot-relay</a>
 
 ### Description
 
