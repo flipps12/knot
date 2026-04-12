@@ -16,12 +16,16 @@ use crate::utils::framing::BinaryFrame;
 type ServerRegistry = Arc<Mutex<HashMap<u64, u16>>>;
 pub type ConnectionMap = Arc<Mutex<HashMap<u16, mpsc::Sender<Bytes>>>>;
 
-#[derive(Deserialize, Debug)]
-pub struct Message {
-    //id: u32,
-    pub command: String,
-    pub value: String,
-    pub port: u16,
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(tag = "command", rename_all = "snake_case")]
+pub enum Message {
+    Status,
+    #[serde(rename = "newappname")]
+    Register { name: String, port: u16 },
+    Connect { addr: String },
+    Discover { peer_id: String },
+    #[serde(rename = "connectrelay")]
+    ConnectRelay { relay_addr: String, relay_id: String },
 }
 
 #[derive(Debug)]
