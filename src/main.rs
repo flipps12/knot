@@ -4,25 +4,37 @@ mod network;
 mod core;
 mod utils;
 
-use crate::ingress::socket::{IngressCommand, start_ingress};
-use crate::network::swarm::{NetworkCommand, NetworkResponse, start_network};
+use crate::ingress::socket::{ IngressCommand, start_ingress };
+use crate::network::swarm::{ NetworkCommand, NetworkResponse, start_network };
 use crate::utils::framing::BinaryFrame;
 
 use std::env;
-use libp2p::{Multiaddr, PeerId};
+use libp2p::{ Multiaddr, PeerId };
 use tokio::sync::mpsc;
-
 
 #[derive(Debug)]
 pub enum KnotMessage {
     // De Ingress al Core: "Tengo datos de un cliente"
-    ClientData { from_ip: String, frame: BinaryFrame },
-    ConnectToNetwork { addr: String },
-    DiscoverNetwork { peerid: String },
+    ClientData {
+        from_ip: String,
+        frame: BinaryFrame,
+    },
+    ConnectToNetwork {
+        addr: String,
+    },
+    DiscoverNetwork {
+        peerid: String,
+    },
     GetPeersNetwork,
-    ConnectRelay { relay_addr: Multiaddr, relay_peer_id: PeerId },
+    ConnectRelay {
+        relay_addr: Multiaddr,
+        relay_peer_id: PeerId,
+    },
     // Del Network al Core: "Recibí algo del P2P"
-    NetworkData { from_ip: String, frame: BinaryFrame },
+    NetworkData {
+        from_ip: String,
+        frame: BinaryFrame,
+    },
     NetworkResponse(NetworkResponse),
     Shutdown,
     Log(String),
@@ -33,31 +45,42 @@ async fn main() {
     #[cfg(debug_assertions)]
     println!("Debug mode");
 
-    // for benchamrk 
+    // for benchamrk
     let mut count = 0;
     let mut count_rec = 0;
 
     // Args for ports
     let args: Vec<String> = env::args().collect();
 
-    let port_ingress = args.get(1)
+    let port_ingress = args
+        .get(1)
         .map(|s| s.parse::<u16>().expect("Puerto Ingress inválido"))
         .unwrap_or(12012); // Default Ingress
 
-    let port_ingress_binary = args.get(2)
+    let port_ingress_binary = args
+        .get(2)
         .map(|s| s.parse::<u16>().expect("Puerto Ingress inválido"))
         .unwrap_or(12812); // Second Default Ingress
 
-    let port_network = args.get(3)
+    let port_network = args
+        .get(3)
         .map(|s| s.parse::<u16>().expect("Puerto Network inválido"))
         .unwrap_or(13013); // Default P2P
+
+    let temp_peerid = args
+        .get(4)
+        .map(|s| s.parse::<bool>().expect("Puerto Network inválido"))
+        .unwrap_or(false); // Default P2P
 
     println!("--- Knot P2P Protocol Node ---");
     println!("[Main] Ingress Port: {}", port_ingress);
     println!("[Main] Ingress Binary Port: {}", port_ingress_binary);
     println!("[Main] Network Port: {}", port_network);
+    if temp_peerid {
+        println!("Temporal PeerID");
+    }
 
-    // Main Channel 
+    // Main Channel
     // Ingress -> Core <- Network
     let (hub_tx, mut hub_rx) = mpsc::channel::<KnotMessage>(10000);
 
@@ -75,7 +98,7 @@ async fn main() {
 
     // Spawn Workers
     tokio::spawn(start_ingress(to_ing_rx, ing_hub_tx, port_ingress, port_ingress_binary));
-    tokio::spawn(start_network(to_net_rx, net_hub_tx, port_network));
+    tokio::spawn(start_network(to_net_rx, net_hub_tx, temp_peerid, port_network));
 
     // For debug, Core is this
     loop {
