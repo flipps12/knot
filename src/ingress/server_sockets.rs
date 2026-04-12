@@ -56,6 +56,12 @@ pub async fn start_managed_server(
                                     let _ = framed.send("trying...").await;
                                     return; 
                                 },
+                                "connectrelay" => {
+                                    let _ = tx_clone.send(CentralEvent::ConnectRelay { relay_addr: "/ip4/192.168.0.46/tcp/4001".parse().unwrap(), relay_peer_id: req.value.parse().unwrap() }).await;
+
+                                    let _ = framed.send("trying...").await;
+                                    return; 
+                                },
                                 _ => {
                                     let _ = framed.send("Comando desconocido").await;
                                 }

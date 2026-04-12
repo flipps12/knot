@@ -1,12 +1,12 @@
 // src/network/swarm.rs
 
 use libp2p::{
-    Multiaddr, PeerId, SwarmBuilder, identify, kad, mdns, request_response, swarm::{NetworkBehaviour, SwarmEvent}
+    Multiaddr, PeerId, SwarmBuilder, Transport, core::upgrade, identify, kad, mdns, noise, ping, relay, request_response, swarm::{NetworkBehaviour, SwarmEvent}, tcp, yamux
 };
 use async_trait::async_trait;
 use futures::StreamExt;
 use tokio::sync::mpsc;
-use std::error::Error;
+use std::{error::Error, ops::Mul};
 use std::time::Duration;
 use std::collections::HashMap;
 use bytes::{Bytes, BytesMut};
@@ -33,7 +33,7 @@ pub enum NetworkCommand {
     GetPeers,
     DialAddress(libp2p::Multiaddr),
     LookupPeer(libp2p::PeerId),
-    PrepareHolePunch(libp2p::PeerId),
+    ConnectRelay { relay_addr: Multiaddr, relay_peer_id: PeerId },
 }
 
 #[derive(Debug)]
@@ -120,17 +120,17 @@ impl request_response::Codec for FrameCodec {
 #[derive(NetworkBehaviour)]
 pub struct KnotBehaviour {
     pub identify: identify::Behaviour,
+    pub ping: ping::Behaviour,
     pub kademlia: kad::Behaviour<kad::store::MemoryStore>,
     pub frames: request_response::Behaviour<FrameCodec>,
-    pub mdns: mdns::tokio::Behaviour,
+    //pub mdns: mdns::tokio::Behaviour,
+    // For transveral nat
+    pub relay_client: relay::client::Behaviour,
+    //pub dcutr: libp2p::dcutr::Behaviour,
 }
 
-/// Tabla de peers conocidos: PeerId → lista de Multiaddr activas
 type PeerTable = HashMap<PeerId, Vec<Multiaddr>>;
-
-// ─────────────────────────────────────────────
-//  Entry point: start_network
-// ─────────────────────────────────────────────
+type RelayPeerTable = HashMap<PeerId, Multiaddr>;
 
 pub async fn start_network(
     rx: mpsc::Receiver<NetworkCommand>,
@@ -149,31 +149,34 @@ async fn run_network(
     port: u16
 ) -> Result<(), Box<dyn Error>> {
 
-    // ── 1. Identidad local ──────────────────────────────────────────────
     let local_key = libp2p::identity::Keypair::generate_ed25519();
     let local_peer_id = PeerId::from(local_key.public());
+    let (relay_transport, relay_client) = relay::client::new(local_peer_id);
     println!("[Network] Local Peer ID: {}", local_peer_id);
 
     let mut quic_config = libp2p_quic::Config::new(&local_key);
 
-    // 10MB de margen para que los frames grandes fluyan sin pausas
     quic_config.max_stream_data = 10_485_760;     // 10MB por cada stream individual
     quic_config.max_connection_data = 15_728_640; // 15MB total de la conexión (agregado)
     quic_config.max_idle_timeout = 30_000;
 
-    // ── 2. Swarm con QUIC ───────────────────────────────────────────────
-    // SwarmBuilder::with_existing_identity toma el keypair y configura
-    // el transporte QUIC automáticamente (TLS 1.3 integrado, 0-RTT).
-    // ── 2. Swarm con QUIC Tuned ───────────────────────────────────────────
+
     let mut swarm = SwarmBuilder::with_existing_identity(local_key)
         .with_tokio()
-        // ESTO ES LO QUE CAMBIA: Usamos el método específico de QUIC
+        .with_tcp(tcp::Config::default(), noise::Config::new, yamux::Config::default)?
         .with_quic_config(|mut config| {
-            config.max_stream_data = 10_485_760;     // 10MB por stream
-            config.max_connection_data = 15_728_640; // 15MB total conexión
-            config.max_idle_timeout = 30_000;        // 30 segundos
+            config.max_stream_data = 10_485_760;
+            config.max_connection_data = 15_728_640;
+            config.max_idle_timeout = 30_000;
             config
         })
+          .with_other_transport(|key| {
+            Ok(relay_transport
+                .or_transport(libp2p::tcp::tokio::Transport::default())
+                .upgrade(upgrade::Version::V1)
+                .authenticate(noise::Config::new(key).unwrap())
+                .multiplex(yamux::Config::default()))
+        })?
         .with_behaviour(|key| {
             let peer_id = PeerId::from(key.public());
 
@@ -189,6 +192,8 @@ async fn run_network(
                 identify::Config::new("/knot/1.0.0".into(), key.public())
                     .with_interval(Duration::from_secs(60)),
             );
+
+            let ping = ping::Behaviour::new(ping::Config::default());
 
             // Request/Response para BinaryFrame
             let frames = request_response::Behaviour::new(
@@ -206,32 +211,46 @@ async fn run_network(
                 key.public().to_peer_id()
             )?;
 
-            Ok(KnotBehaviour { identify, kademlia, frames, mdns })
+            Ok(KnotBehaviour { identify, ping, kademlia, frames, //mdns, 
+                relay_client }) // , dcutr: libp2p::dcutr::Behaviour::new(local_peer_id)
         })?
-        .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(60)))
+        .with_swarm_config(|c| {
+            c.with_idle_connection_timeout(Duration::from_secs(60))
+            .with_max_negotiating_inbound_streams(100) // Evita cuellos de botella
+        })
         .build();
 
-    // ── 3. Escuchar en QUIC ─────────────────────────────────────────────
-    // /ip4/0.0.0.0/udp/<puerto>/quic-v1  ← formato correcto para QUIC v1
+    // /ip4/0.0.0.0/udp/<puerto>/quic-v1 
+    swarm.listen_on(format!("/ip4/0.0.0.0/tcp/{}", port).parse()?)?;
     swarm.listen_on(format!("/ip4/0.0.0.0/udp/{}/quic-v1", port).parse()?)?;
     println!("[Network] Escuchando en QUIC: {}", port);
 
-    // ── 4. Bootstrap con peers conocidos (opcional) ─────────────────────
-    // En producción vendría de config/env; aquí dejamos el slot listo.
-    // bootstrap_peers(&mut swarm);
+    // table with peerid - multiaddr for relay pending req
+    let mut pending_listen: RelayPeerTable = HashMap::new();
+    
+    // let mut relay_peer_id: Option<PeerId> = None;
+    // let mut relay_listen_started = false;
 
-    // ── 5. Tabla de peers conocidos ─────────────────────────────────────
+    // let relay_addr: Multiaddr = "/ip4/192.168.0.46/tcp/4001/p2p/12D3KooWNyHgstK62mVHKJZEfyHp9cUirviw4CFN34VgMcQMjWUh".parse()?;
+    // let relay_peer_id_expected: PeerId = "12D3KooWNyHgstK62mVHKJZEfyHp9cUirviw4CFN34VgMcQMjWUh".parse()?;
+
+    // let _ = swarm.dial(relay_addr.clone());
+    
+    // let mut relay_listen_started = false;
+
     let mut peer_table: PeerTable = HashMap::new();
 
-    // ── 6. Loop principal ───────────────────────────────────────────────
     loop {
         tokio::select! {
 
-            // ── A. Mensajes del Core → enviar por P2P ──────────────────
             Some(cmd) = command_rx.recv() => {
                 match cmd {
                     NetworkCommand::SendFrame { target_u64, frame } => {
                         handle_outbound_by_u64(&mut swarm, &peer_table, target_u64, frame);
+                        // let _ = swarm.listen_on(relay_addr.clone().with(libp2p::multiaddr::Protocol::P2pCircuit));
+
+                        // let relay_addr: Multiaddr = "/ip4/192.168.0.46/tcp/4001/p2p/12D3KooWNyHgstK62mVHKJZEfyHp9cUirviw4CFN34VgMcQMjWUh/p2p-circuit/p2p/12D3KooWPn1imvU9kAMXqsQ3LLgeLebbZPqmLX3ANkBVs6agyoux".parse().unwrap();
+                        // let _ = swarm.dial(relay_addr);
                     }
                     NetworkCommand::GetPeers => {
                         let list = peer_table.clone().into_iter().collect();
@@ -244,16 +263,28 @@ async fn run_network(
                     NetworkCommand::LookupPeer(peer_id) => {
                         swarm.behaviour_mut().kademlia.get_closest_peers(peer_id);
                     }
-                    NetworkCommand::PrepareHolePunch(peer_id) => {
-                        // Aquí iría la lógica de dcut/relay en el futuro
-                        println!("[Network] Hole punching solicitado para {}", peer_id);
+                    NetworkCommand::ConnectRelay { relay_addr, relay_peer_id }  => {
+                        // let circuit_addr: Multiaddr = format!("{}/p2p-circuit", relay_addr).parse().unwrap();
+                        pending_listen.insert(relay_peer_id, relay_addr.clone().with(libp2p::multiaddr::Protocol::P2p(relay_peer_id)).with(libp2p::multiaddr::Protocol::P2pCircuit));
+                        let _ = swarm.dial(relay_addr);
                     }
                 }
             }
 
-            // ── B. Eventos del Swarm ───────────────────────────────────
             event = swarm.next() => {
                 let Some(event) = event else { break };
+
+                // For relay connection
+                if let SwarmEvent::ConnectionEstablished { peer_id, .. } = &event {
+                    if let Some(addr) = pending_listen.remove(peer_id) {
+                        println!("[Network] Connected to relay: {}", addr);
+                        match swarm.listen_on(addr) {
+                            Ok(id) => println!("[Network] listen_on circuit OK: {:?}", id),
+                            Err(e) => eprintln!("[Network] listen_on circuit failed: {e}"),
+                        }
+                    }
+                }
+
                 handle_swarm_event(event, &mut swarm, &mut peer_table, &hub_tx).await;
             }
         }
@@ -262,9 +293,6 @@ async fn run_network(
     Ok(())
 }
 
-// ─────────────────────────────────────────────
-//  Manejo de eventos del Swarm
-// ─────────────────────────────────────────────
 
 async fn handle_swarm_event(
     event: SwarmEvent<KnotBehaviourEvent>,
@@ -276,8 +304,8 @@ async fn handle_swarm_event(
 
         // ── Conexión establecida ───────────────────────────────────────
         SwarmEvent::ConnectionEstablished { peer_id, endpoint, .. } => {
-            println!("[Network] ✓ Conectado a {}", peer_id);
-            let addr = endpoint.get_remote_address().clone();
+            println!("[Network] Conectado a {} via {:?}", peer_id, endpoint.get_remote_address());
+        let addr = endpoint.get_remote_address().clone();
             peer_table.entry(peer_id).or_default().push(addr.clone());
             // Anunciar al peer en Kademlia
             swarm.behaviour_mut().kademlia.add_address(&peer_id, addr);
@@ -292,6 +320,13 @@ async fn handle_swarm_event(
         // ── Nueva dirección de escucha confirmada ──────────────────────
         SwarmEvent::NewListenAddr { address, .. } => {
             println!("[Network] Escuchando en: {}", address);
+        }
+
+        SwarmEvent::IncomingConnectionError { error, .. } => {
+            eprintln!("[Network] Error en conexión entrante (posible fallo de reserva): {:?}", error);
+        }
+        SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {
+            eprintln!("[Network] Error al contactar al peer {:?}: {:?}", peer_id, error);
         }
 
         // ── Eventos de comportamiento compuesto ────────────────────────
@@ -312,24 +347,48 @@ async fn handle_behaviour_event(
 ) {
     match event {
 
+        // --- RELAY CLIENT EVENTS ---
+        KnotBehaviourEvent::RelayClient(relay::client::Event::ReservationReqAccepted { relay_peer_id, .. }) => {
+            println!("[Network Relay] Reserva activa en Relay: {}", relay_peer_id);
+        },
+        KnotBehaviourEvent::RelayClient(relay::client::Event::InboundCircuitEstablished { src_peer_id, .. }) => {
+            eprintln!("[Network Relay] Circito creado via {}", src_peer_id);
+        },
+        KnotBehaviourEvent::RelayClient(relay::client::Event::OutboundCircuitEstablished { relay_peer_id, .. }) => {
+            println!("[Network Relay] Circuito de salida creado vía {}", relay_peer_id);
+        },
+
+        // --- DCUtR (HOLE PUNCHING) EVENTS ---
+        // KnotBehaviourEvent::Dcutr(libp2p::dcutr::Event { remote_peer_id, result }) => {
+        //     match result {
+        //         Ok(_) => {
+        //             println!("[Network] HOLE PUNCHING EXITOSO Conexión directa con {}", remote_peer_id);
+        //             let _ = hub_tx.send(KnotMessage::Log(format!("P2P Directo con {}", remote_peer_id))).await;
+        //         },
+        //         Err(e) => {
+        //             eprintln!("[Network] Falló el upgrade directo con {}: {:?}", remote_peer_id, e);
+        //         }
+        //     }
+        // },
+
         // --- mDNS: Peer discovered ---
-        KnotBehaviourEvent::Mdns(mdns::Event::Discovered(list)) => {
-            for (peer_id, addr) in list {
-                println!("[Network] mDNS: Nuevo peer local hallado: {}", peer_id);
-                // Lo añadimos a Kademlia para que el ruteo sepa dónde está
-                swarm.behaviour_mut().kademlia.add_address(&peer_id, addr.clone());
-                // Lo registramos en nuestra tabla interna
-                peer_table.entry(peer_id).or_default().push(addr);
-            }
-        }
+        // KnotBehaviourEvent::Mdns(mdns::Event::Discovered(list)) => {
+        //     for (peer_id, addr) in list {
+        //         println!("[Network] mDNS: Nuevo peer local hallado: {}", peer_id);
+        //         // Lo añadimos a Kademlia para que el ruteo sepa dónde está
+        //         swarm.behaviour_mut().kademlia.add_address(&peer_id, addr.clone());
+        //         // Lo registramos en nuestra tabla interna
+        //         peer_table.entry(peer_id).or_default().push(addr);
+        //     }
+        // }
         
-        // --- mDNS: Peer expired ---
-        KnotBehaviourEvent::Mdns(mdns::Event::Expired(list)) => {
-            for (peer_id, _addr) in list {
-                println!("[Network] mDNS: Peer local expirado: {}", peer_id);
-                // Opcional: limpiar de la tabla si quieres ser estricto
-            }
-        }
+        // // --- mDNS: Peer expired ---
+        // KnotBehaviourEvent::Mdns(mdns::Event::Expired(list)) => {
+        //     for (peer_id, _addr) in list {
+        //         println!("[Network] mDNS: Peer local expirado: {}", peer_id);
+        //         // Opcional: limpiar de la tabla si quieres ser estricto
+        //     }
+        // }
 
         // ── Identify: peer se identifica → actualizar tabla ────────────
         KnotBehaviourEvent::Identify(identify::Event::Received { peer_id, info, connection_id: _ }) => {
@@ -343,9 +402,37 @@ async fn handle_behaviour_event(
                 let _ = swarm.behaviour_mut().kademlia.bootstrap();
                 println!("[Network] Kademlia bootstrap iniciado");
             }
+
+
+            let relay_peer_id: PeerId = "12D3KooWSFszXZqpib4AtfucYd3DqHdT4XJf2ZNo3qCvfnwuWrEL"
+                .parse()
+                .unwrap();
+            
+            if peer_id == relay_peer_id {
+                // Verificar que el relay soporte el protocolo hop
+                let supports_relay = info.protocols.iter().any(|p| {
+                    p.as_ref().contains("circuit/relay")
+                });
+                
+                if supports_relay {
+                    let relay_addr: Multiaddr = 
+                        "/ip4/192.168.0.37/tcp/4001/p2p/12D3KooWSFszXZqpib4AtfucYd3DqHdT4XJf2ZNo3qCvfnwuWrEL"
+                        .parse().unwrap();
+                    let circuit_addr: Multiaddr = format!("{}/p2p-circuit", relay_addr)
+                        .parse().unwrap();
+                    
+                    println!("[Network] Relay soporta circuit relay, registrando escucha...");
+                    match swarm.listen_on(circuit_addr) {
+                        Ok(id) => println!("[Network] listen_on circuit OK: {:?}", id),
+                        Err(e) => eprintln!("[Network] listen_on circuit FALLÓ: {e}"),
+                    }
+                } else {
+                    eprintln!("[Network] El relay NO anuncia soporte para circuit/relay");
+                    println!("[Network] Protocolos del relay: {:?}", info.protocols);
+                }
+            }
         }
 
-        // ── Kademlia: peer descubierto vía DHT ─────────────────────────
         KnotBehaviourEvent::Kademlia(kad::Event::RoutingUpdated { peer, addresses, .. }) => {
             println!("[Network] DHT routing actualizado para {}", peer);
             for addr in addresses.iter() {
@@ -377,7 +464,6 @@ async fn handle_behaviour_event(
                 FrameResponse { ok: true },
             );
 
-            // Decodificar y reenviar al Core vía hub
             if request.raw.len() >= 24 {
                 let mut header = [0u8; 24];
                 header.copy_from_slice(&request.raw[..24]);
@@ -394,7 +480,6 @@ async fn handle_behaviour_event(
             }
         }
 
-        // ── Request/Response: confirmación de envío ────────────────────
         KnotBehaviourEvent::Frames(request_response::Event::Message {
             peer,
             message: request_response::Message::Response { response, .. },
@@ -416,17 +501,12 @@ async fn handle_behaviour_event(
     }
 }
 
-// ─────────────────────────────────────────────
-//  Utilidades
-// ─────────────────────────────────────────────
-
 fn handle_outbound_by_u64(
     swarm: &mut libp2p::Swarm<KnotBehaviour>,
     peer_table: &PeerTable,
     target_u64: u64,
     raw: Bytes,
 ) {
-    // Buscamos en nuestra tabla de peers si algún PeerId matchea con el u64
     let target = peer_table
         .keys()
         .find(|pid| peer_id_to_u64(pid) == target_u64)
