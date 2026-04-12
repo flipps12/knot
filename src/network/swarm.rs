@@ -6,7 +6,7 @@ use libp2p::{
 use async_trait::async_trait;
 use futures::StreamExt;
 use tokio::sync::mpsc;
-use std::{error::Error, ops::Mul};
+use std::error::Error;
 use std::time::Duration;
 use std::collections::HashMap;
 use bytes::{Bytes, BytesMut};
@@ -123,10 +123,10 @@ pub struct KnotBehaviour {
     pub ping: ping::Behaviour,
     pub kademlia: kad::Behaviour<kad::store::MemoryStore>,
     pub frames: request_response::Behaviour<FrameCodec>,
-    //pub mdns: mdns::tokio::Behaviour,
+    pub mdns: mdns::tokio::Behaviour,
     // For transveral nat
     pub relay_client: relay::client::Behaviour,
-    //pub dcutr: libp2p::dcutr::Behaviour,
+    pub dcutr: libp2p::dcutr::Behaviour,
 }
 
 type PeerTable = HashMap<PeerId, Vec<Multiaddr>>;
@@ -211,8 +211,7 @@ async fn run_network(
                 key.public().to_peer_id()
             )?;
 
-            Ok(KnotBehaviour { identify, ping, kademlia, frames, //mdns, 
-                relay_client }) // , dcutr: libp2p::dcutr::Behaviour::new(local_peer_id)
+            Ok(KnotBehaviour { identify, ping, kademlia, frames, mdns, relay_client, dcutr: libp2p::dcutr::Behaviour::new(local_peer_id) })
         })?
         .with_swarm_config(|c| {
             c.with_idle_connection_timeout(Duration::from_secs(60))
@@ -228,16 +227,7 @@ async fn run_network(
     // table with peerid - multiaddr for relay pending req
     let mut pending_listen: RelayPeerTable = HashMap::new();
     
-    // let mut relay_peer_id: Option<PeerId> = None;
-    // let mut relay_listen_started = false;
-
-    // let relay_addr: Multiaddr = "/ip4/192.168.0.46/tcp/4001/p2p/12D3KooWNyHgstK62mVHKJZEfyHp9cUirviw4CFN34VgMcQMjWUh".parse()?;
-    // let relay_peer_id_expected: PeerId = "12D3KooWNyHgstK62mVHKJZEfyHp9cUirviw4CFN34VgMcQMjWUh".parse()?;
-
-    // let _ = swarm.dial(relay_addr.clone());
-    
-    // let mut relay_listen_started = false;
-
+    // table for saved peers
     let mut peer_table: PeerTable = HashMap::new();
 
     loop {
@@ -247,10 +237,6 @@ async fn run_network(
                 match cmd {
                     NetworkCommand::SendFrame { target_u64, frame } => {
                         handle_outbound_by_u64(&mut swarm, &peer_table, target_u64, frame);
-                        // let _ = swarm.listen_on(relay_addr.clone().with(libp2p::multiaddr::Protocol::P2pCircuit));
-
-                        // let relay_addr: Multiaddr = "/ip4/192.168.0.46/tcp/4001/p2p/12D3KooWNyHgstK62mVHKJZEfyHp9cUirviw4CFN34VgMcQMjWUh/p2p-circuit/p2p/12D3KooWPn1imvU9kAMXqsQ3LLgeLebbZPqmLX3ANkBVs6agyoux".parse().unwrap();
-                        // let _ = swarm.dial(relay_addr);
                     }
                     NetworkCommand::GetPeers => {
                         let list = peer_table.clone().into_iter().collect();
@@ -264,7 +250,6 @@ async fn run_network(
                         swarm.behaviour_mut().kademlia.get_closest_peers(peer_id);
                     }
                     NetworkCommand::ConnectRelay { relay_addr, relay_peer_id }  => {
-                        // let circuit_addr: Multiaddr = format!("{}/p2p-circuit", relay_addr).parse().unwrap();
                         pending_listen.insert(relay_peer_id, relay_addr.clone().with(libp2p::multiaddr::Protocol::P2p(relay_peer_id)).with(libp2p::multiaddr::Protocol::P2pCircuit));
                         let _ = swarm.dial(relay_addr);
                     }
@@ -359,36 +344,36 @@ async fn handle_behaviour_event(
         },
 
         // --- DCUtR (HOLE PUNCHING) EVENTS ---
-        // KnotBehaviourEvent::Dcutr(libp2p::dcutr::Event { remote_peer_id, result }) => {
-        //     match result {
-        //         Ok(_) => {
-        //             println!("[Network] HOLE PUNCHING EXITOSO Conexión directa con {}", remote_peer_id);
-        //             let _ = hub_tx.send(KnotMessage::Log(format!("P2P Directo con {}", remote_peer_id))).await;
-        //         },
-        //         Err(e) => {
-        //             eprintln!("[Network] Falló el upgrade directo con {}: {:?}", remote_peer_id, e);
-        //         }
-        //     }
-        // },
+        KnotBehaviourEvent::Dcutr(libp2p::dcutr::Event { remote_peer_id, result }) => {
+            match result {
+                Ok(_) => {
+                    println!("[Network] HOLE PUNCHING EXITOSO Conexión directa con {}", remote_peer_id);
+                    let _ = hub_tx.send(KnotMessage::Log(format!("P2P Directo con {}", remote_peer_id))).await;
+                },
+                Err(e) => {
+                    eprintln!("[Network] Falló el upgrade directo con {}: {:?}", remote_peer_id, e);
+                }
+            }
+        },
 
         // --- mDNS: Peer discovered ---
-        // KnotBehaviourEvent::Mdns(mdns::Event::Discovered(list)) => {
-        //     for (peer_id, addr) in list {
-        //         println!("[Network] mDNS: Nuevo peer local hallado: {}", peer_id);
-        //         // Lo añadimos a Kademlia para que el ruteo sepa dónde está
-        //         swarm.behaviour_mut().kademlia.add_address(&peer_id, addr.clone());
-        //         // Lo registramos en nuestra tabla interna
-        //         peer_table.entry(peer_id).or_default().push(addr);
-        //     }
-        // }
+        KnotBehaviourEvent::Mdns(mdns::Event::Discovered(list)) => {
+            for (peer_id, addr) in list {
+                println!("[Network] mDNS: Nuevo peer local hallado: {}", peer_id);
+                // Lo añadimos a Kademlia para que el ruteo sepa dónde está
+                swarm.behaviour_mut().kademlia.add_address(&peer_id, addr.clone());
+                // Lo registramos en nuestra tabla interna
+                peer_table.entry(peer_id).or_default().push(addr);
+            }
+        }
         
-        // // --- mDNS: Peer expired ---
-        // KnotBehaviourEvent::Mdns(mdns::Event::Expired(list)) => {
-        //     for (peer_id, _addr) in list {
-        //         println!("[Network] mDNS: Peer local expirado: {}", peer_id);
-        //         // Opcional: limpiar de la tabla si quieres ser estricto
-        //     }
-        // }
+        // --- mDNS: Peer expired ---
+        KnotBehaviourEvent::Mdns(mdns::Event::Expired(list)) => {
+            for (peer_id, _addr) in list {
+                println!("[Network] mDNS: Peer local expirado: {}", peer_id);
+                // Opcional: limpiar de la tabla si quieres ser estricto
+            }
+        }
 
         // ── Identify: peer se identifica → actualizar tabla ────────────
         KnotBehaviourEvent::Identify(identify::Event::Received { peer_id, info, connection_id: _ }) => {
