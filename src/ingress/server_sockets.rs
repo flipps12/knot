@@ -19,53 +19,47 @@ pub async fn start_managed_server(
     println!("[Servidor {}] Started", port);
 
     loop {
-        let (socket, addr) = listener.accept().await?;
+        let (socket, _addr) = listener.accept().await?;
         let tx_clone = central_tx.clone();
 
         tokio::spawn(async move {            
             let mut framed = Framed::new(socket, LinesCodec::new());
 
-            while let Some(result) = framed.next().await {
-                match result {
-                    Ok(linea) => {
-                        if let Ok(req) = serde_json::from_str::<Message>(&linea) {
-                            
-                            match req.command.as_str() {
-                                "status" => {
-                                    let resp = ResponseTcp { command: "REPORT".into(), value: "OK".into() };
-                                    let _ = framed.send(serde_json::to_string(&resp).unwrap()).await;
-                                },
-                                "newappname" => {
-                                    
-                                    let app_id = string_to_u64_rust(&req.value); 
-                                    let _ = tx_clone.send(CentralEvent::Register { app_id, port: req.port }).await;
-                                    
-                                    let response_text = format!("OK: Registered ID {}", app_id);
-                                    let _ = framed.send(response_text).await;
-                                    return; 
-                                },
-                                "connect" => {
-                                    let _ = tx_clone.send(CentralEvent::Connect { addr: req.value}).await;
-
-                                    let _ = framed.send("trying...").await;
-                                    return; 
-                                },
-                                "discover" => {
-                                    let _ = tx_clone.send(CentralEvent::Discover { peerid: req.value}).await;
-
-                                    let _ = framed.send("trying...").await;
-                                    return; 
-                                },
-                                _ => {
-                                    let _ = framed.send("Comando desconocido").await;
-                                }
-                            }
+            while let Some(Ok(linea)) = framed.next().await {
+                // Deserialización directa al Enum
+                if let Ok(msg) = serde_json::from_str::<Message>(&linea) {
+                    match msg {
+                        Message::Status => {
+                            let resp = ResponseTcp { command: "REPORT".into(), value: "OK".into() };
+                            let _ = framed.send(serde_json::to_string(&resp).unwrap()).await;
+                        },
+                        Message::Register { name, port } => {
+                            let app_id = string_to_u64_rust(&name); 
+                            let _ = tx_clone.send(CentralEvent::Register { app_id, port }).await;
+                            let _ = framed.send(format!("OK: Registered ID {}", app_id)).await;
+                            return; 
+                        },
+                        Message::Connect { addr } => {
+                            let _ = tx_clone.send(CentralEvent::Connect { addr }).await;
+                            let _ = framed.send("Connecting...").await;
+                            return;
+                        },
+                        Message::ConnectRelay { relay_addr, relay_id } => {
+                            let _ = tx_clone.send(CentralEvent::ConnectRelay { 
+                                relay_addr: relay_addr.parse().unwrap(), 
+                                relay_peer_id: relay_id.parse().unwrap() 
+                            }).await;
+                            let _ = framed.send("Relay request sent").await;
+                            return;
+                        },
+                        Message::Discover { peer_id } => {
+                            let _ = tx_clone.send(CentralEvent::Discover { peerid: peer_id }).await;
+                            let _ = framed.send("Discovery started").await;
+                            return;
                         }
                     }
-                    Err(e) => {
-                        eprintln!("Conexión cerrada con {}: {}", addr, e);
-                        break;
-                    }
+                } else {
+                    let _ = framed.send("ERROR: Invalid Command or Params").await;
                 }
             }
         });

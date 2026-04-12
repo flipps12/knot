@@ -16,12 +16,16 @@ use crate::utils::framing::BinaryFrame;
 type ServerRegistry = Arc<Mutex<HashMap<u64, u16>>>;
 pub type ConnectionMap = Arc<Mutex<HashMap<u16, mpsc::Sender<Bytes>>>>;
 
-#[derive(Deserialize, Debug)]
-pub struct Message {
-    //id: u32,
-    pub command: String,
-    pub value: String,
-    pub port: u16,
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(tag = "command", rename_all = "snake_case")]
+pub enum Message {
+    Status,
+    #[serde(rename = "newappname")]
+    Register { name: String, port: u16 },
+    Connect { addr: String },
+    Discover { peer_id: String },
+    #[serde(rename = "connectrelay")]
+    ConnectRelay { relay_addr: String, relay_id: String },
 }
 
 #[derive(Debug)]
@@ -29,7 +33,8 @@ pub enum CentralEvent {
     Register { app_id: u64, port: u16 }, // save appid with a socekt port for redirect frames
     Connect { addr: String }, // dial peer with address
     Discover { peerid: String }, // use dht for discover address with a peerid
-    RouteBinary { from_ip: String, frame: BinaryFrame } // Send frame data with BinaryFrame
+    RouteBinary { from_ip: String, frame: BinaryFrame }, // Send frame data with BinaryFrame
+    ConnectRelay { relay_addr: libp2p::Multiaddr, relay_peer_id: libp2p::PeerId },
 }
 
 #[derive(Serialize, Debug)]
@@ -112,6 +117,10 @@ pub async fn start_ingress(mut rx: mpsc::Receiver<IngressCommand>, hub_tx: mpsc:
                     
                     // Aquí buscarías en tu Registro quién tiene ese PeerID y le mandas el SendRaw
                     let _ = hub_tx.send(KnotMessage::ClientData { from_ip, frame }).await;
+                    
+                }
+                CentralEvent::ConnectRelay { relay_addr, relay_peer_id }=> {
+                    let _ = hub_tx.send(KnotMessage::ConnectRelay { relay_addr, relay_peer_id }).await;
                     
                 }
             }

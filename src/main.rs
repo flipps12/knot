@@ -20,6 +20,7 @@ pub enum KnotMessage {
     ConnectToNetwork { addr: String },
     DiscoverNetwork { peerid: String },
     GetPeersNetwork,
+    ConnectRelay { relay_addr: Multiaddr, relay_peer_id: PeerId },
     // Del Network al Core: "Recibí algo del P2P"
     NetworkData { from_ip: String, frame: BinaryFrame },
     NetworkResponse(NetworkResponse),
@@ -110,6 +111,9 @@ async fn main() {
                     }
                     KnotMessage::GetPeersNetwork => {
                         let _ = to_net_tx.send(NetworkCommand::GetPeers).await;
+                    }
+                    KnotMessage::ConnectRelay { relay_addr, relay_peer_id} => {
+                        let _ = to_net_tx.send(NetworkCommand::ConnectRelay { relay_addr, relay_peer_id }).await;
                     }
                     KnotMessage::NetworkData { from_ip, frame } => {
                         // for benchmark
