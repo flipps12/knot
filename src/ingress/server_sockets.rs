@@ -30,18 +30,23 @@ pub async fn start_managed_server(
                 if let Ok(msg) = serde_json::from_str::<Message>(&linea) {
                     match msg {
                         Message::Status => {
-                            let resp = ResponseTcp { command: "REPORT".into(), value: "OK".into() };
+                            let resp = ResponseTcp { response: "OK".into() };
                             let _ = framed.send(serde_json::to_string(&resp).unwrap()).await;
                         },
                         Message::Register { name, port } => {
                             let app_id = string_to_u64_rust(&name); 
                             let _ = tx_clone.send(CentralEvent::Register { app_id, port }).await;
-                            let _ = framed.send(format!("OK: Registered ID {}", app_id)).await;
+                            // let _ = framed.send(format!("OK: Registered ID {}", app_id)).await;
+                            let resp = ResponseTcp { response: app_id.to_string() };
+                            let _ = framed.send(serde_json::to_string(&resp).unwrap()).await;
                             return; 
                         },
                         Message::Connect { addr } => {
                             let _ = tx_clone.send(CentralEvent::Connect { addr }).await;
-                            let _ = framed.send("Connecting...").await;
+                            // let _ = framed.send("Connecting...").await;
+
+                            let resp = ResponseTcp { response: "OK".into() };
+                            let _ = framed.send(serde_json::to_string(&resp).unwrap()).await;
                             return;
                         },
                         Message::ConnectRelay { relay_addr, relay_id } => {
@@ -49,12 +54,20 @@ pub async fn start_managed_server(
                                 relay_addr: relay_addr.parse().unwrap(), 
                                 relay_peer_id: relay_id.parse().unwrap() 
                             }).await;
-                            let _ = framed.send("Relay request sent").await;
+                            // let _ = framed.send("Relay request sent").await;
+
+
+                            let resp = ResponseTcp { response: "OK".into() };
+                            let _ = framed.send(serde_json::to_string(&resp).unwrap()).await;
                             return;
                         },
                         Message::Discover { peer_id } => {
                             let _ = tx_clone.send(CentralEvent::Discover { peerid: peer_id }).await;
-                            let _ = framed.send("Discovery started").await;
+                            // let _ = framed.send("Discovery started").await;
+
+
+                            let resp = ResponseTcp { response: "OK".into() };
+                            let _ = framed.send(serde_json::to_string(&resp).unwrap()).await;
                             return;
                         }
                     }

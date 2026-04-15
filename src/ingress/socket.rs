@@ -39,8 +39,7 @@ pub enum CentralEvent {
 
 #[derive(Serialize, Debug)]
 pub struct ResponseTcp {
-    pub command: String,
-    pub value: String,
+    pub response: String,
 }
 
 pub enum IngressCommand {
