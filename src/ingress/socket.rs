@@ -97,9 +97,6 @@ pub async fn start_ingress(
                     let decoded_frame = BinaryFrame::decode(buf);
                     let app_id = decoded_frame.app_id;
 
-                    #[cfg(debug_assertions)]
-                    println!("Entrante desde {} hasta appid: {}", from_ip, app_id);
-
                     let reg = registry_for_central.lock().await;
                     if let Some(&target_port) = reg.get(&app_id) {
                         println!(
@@ -109,7 +106,7 @@ pub async fn start_ingress(
                         send_to_local_app(Arc::clone(&conns), target_port, decoded_frame.payload)
                             .await;
                     } else {
-                        println!("  -> AppID {} no está registrada.", app_id);
+                        println!("  -> AppID {} not registered from {}.", app_id, from_ip);
                     }
                 }
             }
