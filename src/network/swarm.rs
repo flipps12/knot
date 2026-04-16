@@ -21,7 +21,7 @@ use libp2p::{
 use async_trait::async_trait;
 use futures::StreamExt;
 use tokio::sync::mpsc;
-use std::{ error::Error, fs, path::Path };
+use std::{ error::Error, fs, path::PathBuf };
 use std::time::Duration;
 use std::collections::HashMap;
 use bytes::{ Bytes, BytesMut };
@@ -510,20 +510,36 @@ fn handle_outbound_by_u64(
     }
 }
 
-fn load_or_create_identity() -> identity::Keypair {
-    let path = Path::new("identity.bin");
+fn get_knot_config_dir() -> PathBuf {
+    // dirs::config_dir() devuelve:
+    // Linux:   /home/usuario/.config
+    // Windows: C:\Users\Usuario\AppData\Roaming
+    let mut path = dirs::config_dir().expect("No se pudo encontrar el directorio de configuración");
 
-    if path.exists() {
-        // 1. Intentar cargar la llave existente
-        let bytes = fs::read(path).expect("No se pudo leer el archivo de identidad");
+    // Añadimos nuestra carpeta específica
+    path.push("knot");
+
+    // Nos aseguramos de que la carpeta exista (si no, fs::write fallará)
+    if !path.exists() {
+        fs::create_dir_all(&path).expect("No se pudo crear la carpeta de configuración de Knot");
+    }
+
+    path
+}
+
+fn load_or_create_identity() -> identity::Keypair {
+    let mut config_path = get_knot_config_dir();
+    config_path.push("identity.bin");
+
+    if config_path.exists() {
+        let bytes = fs::read(&config_path).expect("No se pudo leer la identidad");
         identity::Keypair::from_protobuf_encoding(&bytes).expect("Archivo de identidad corrupto")
     } else {
-        // 2. Generar una nueva si no existe (usando Ed25519 por defecto)
         let new_key = identity::Keypair::generate_ed25519();
-        let encoded = new_key.to_protobuf_encoding().expect("No se pudo codificar la llave");
+        let encoded = new_key.to_protobuf_encoding().unwrap();
 
-        fs::write(path, encoded).expect("No se pudo guardar la identidad");
-        println!("✨ Nueva identidad generada y guardada en identity.bin");
+        fs::write(&config_path, encoded).expect("No se pudo guardar la identidad");
+        println!("Identidad persistente creada en: {:?}", config_path);
         new_key
     }
 }
