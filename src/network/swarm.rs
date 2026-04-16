@@ -139,7 +139,7 @@ pub async fn start_network(
     port: u16,
 ) {
     match run_network(rx, hub_tx, temp_peerid, port).await {
-        Ok(_) => println!("[Network] Shutdown limpio"),
+        Ok(_) => println!("[Network] Shutdown"),
         Err(e) => eprintln!("[Network] Error fatal: {}", e),
     }
 }
@@ -232,7 +232,6 @@ async fn run_network(
     // /ip4/0.0.0.0/udp/<puerto>/quic-v1
     swarm.listen_on(format!("/ip4/0.0.0.0/tcp/{}", port).parse()?)?;
     swarm.listen_on(format!("/ip4/0.0.0.0/udp/{}/quic-v1", port).parse()?)?;
-    println!("[Network] Escuchando en QUIC: {}", port);
 
     // table with peerid - multiaddr for relay pending req
     let mut pending_listen: RelayPeerTable = HashMap::new();
@@ -318,7 +317,7 @@ async fn handle_swarm_event(
 
         // ── Nueva dirección de escucha confirmada ──────────────────────
         SwarmEvent::NewListenAddr { address, .. } => {
-            println!("[Network] Escuchando en: {}", address);
+            println!("[Network] Listening on: {}", address);
         }
 
         SwarmEvent::IncomingConnectionError { error, .. } => {
@@ -498,19 +497,19 @@ async fn handle_behaviour_event(
             }
         }
 
-        KnotBehaviourEvent::Frames(request_response::Event::Message {
-            peer,
-            message: request_response::Message::Response { response, .. },
-            connection_id: _,
-        }) =>
-        {
-            #[cfg(debug_assertions)]
-            if response.ok {
-                println!("[Network] Entrega confirmada por {}", peer);
-            } else {
-                eprintln!("[Network] El peer {} rechazó el frame", peer);
-            }
-        }
+        // KnotBehaviourEvent::Frames(request_response::Event::Message {
+        //     peer,
+        //     message: request_response::Message::Response { response, .. },
+        //     connection_id: _,
+        // }) =>
+        // {
+        //     #[cfg(debug_assertions)]
+        //     if response.ok {
+        //         println!("[Network] Entrega confirmada por {}", peer);
+        //     } else {
+        //         eprintln!("[Network] El peer {} rechazó el frame", peer);
+        //     }
+        // }
 
         KnotBehaviourEvent::Frames(request_response::Event::OutboundFailure {
             peer,

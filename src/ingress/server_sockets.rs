@@ -133,8 +133,7 @@ pub async fn start_binary_data_server(
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let listener = TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
 
-    // Este log queda porque solo se ejecuta una vez al inicio
-    println!("[Servidor {}] Ingress Binario iniciado", port);
+    println!("[Servidor {}] Ingress Binario started", port);
 
     loop {
         let (mut socket, addr) = listener.accept().await?;
