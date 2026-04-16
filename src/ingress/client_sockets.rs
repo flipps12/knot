@@ -1,15 +1,13 @@
-use tokio::net::TcpStream;
-use tokio::io::AsyncWriteExt;
+// src/ingress/client_sockets.rs
+
 use bytes::Bytes;
+use tokio::io::AsyncWriteExt;
+use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 
 use crate::ingress::socket::ConnectionMap;
 
-pub async fn send_to_local_app(
-    connections: ConnectionMap,
-    port: u16,
-    data: Bytes
-) {
+pub async fn send_to_local_app(connections: ConnectionMap, port: u16, data: Bytes) {
     let mut lock = connections.lock().await;
 
     // 1. Intentar obtener el canal existente
@@ -25,10 +23,10 @@ pub async fn send_to_local_app(
     match TcpStream::connect(format!("127.0.0.1:{}", port)).await {
         Ok(mut stream) => {
             let (tx, mut rx) = mpsc::channel::<Bytes>(100);
-            
+
             // Guardamos el canal en el mapa antes de lanzar el hilo
             lock.insert(port, tx.clone());
-            
+
             // Tarea de fondo: Escribe en el socket mientras el canal reciba datos
             tokio::spawn(async move {
                 while let Some(payload) = rx.recv().await {

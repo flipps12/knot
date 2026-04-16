@@ -1,34 +1,23 @@
 // src/network/swarm.rs
 
-use libp2p::{
-    Multiaddr,
-    PeerId,
-    SwarmBuilder,
-    Transport,
-    core::upgrade,
-    identify,
-    identity,
-    kad,
-    mdns,
-    noise,
-    ping,
-    relay,
-    request_response,
-    swarm::{ NetworkBehaviour, SwarmEvent },
-    tcp,
-    yamux,
-};
 use async_trait::async_trait;
+use bytes::{Bytes, BytesMut};
 use futures::StreamExt;
-use tokio::sync::mpsc;
-use std::{ error::Error, fs, path::PathBuf };
-use std::time::Duration;
+use libp2p::{
+    Multiaddr, PeerId, SwarmBuilder, Transport,
+    core::upgrade,
+    identify, identity, kad, mdns, noise, ping, relay, request_response,
+    swarm::{NetworkBehaviour, SwarmEvent},
+    tcp, yamux,
+};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use bytes::{ Bytes, BytesMut };
-use serde::{ Deserialize, Serialize };
+use std::time::Duration;
+use std::{error::Error, fs, path::PathBuf};
+use tokio::sync::mpsc;
 
-use crate::{ KnotMessage, utils::tou64::peer_id_to_u64 };
 use crate::utils::framing::BinaryFrame;
+use crate::{KnotMessage, utils::tou64::peer_id_to_u64};
 
 #[derive(Debug, Clone)]
 pub struct FrameRequest {
@@ -70,7 +59,8 @@ impl request_response::Codec for FrameCodec {
     type Response = FrameResponse;
 
     async fn read_request<T>(&mut self, _: &String, io: &mut T) -> std::io::Result<Self::Request>
-        where T: futures::AsyncRead + Unpin + Send
+    where
+        T: futures::AsyncRead + Unpin + Send,
     {
         use futures::AsyncReadExt;
         let mut len_buf = [0u8; 4];
@@ -81,11 +71,14 @@ impl request_response::Codec for FrameCodec {
         buf.resize(len, 0);
 
         io.read_exact(&mut buf).await?;
-        Ok(FrameRequest { raw: Bytes::from(buf) })
+        Ok(FrameRequest {
+            raw: Bytes::from(buf),
+        })
     }
 
     async fn read_response<T>(&mut self, _: &String, io: &mut T) -> std::io::Result<Self::Response>
-        where T: futures::AsyncRead + Unpin + Send
+    where
+        T: futures::AsyncRead + Unpin + Send,
     {
         use futures::AsyncReadExt;
         let mut buf = [0u8; 1];
@@ -97,9 +90,10 @@ impl request_response::Codec for FrameCodec {
         &mut self,
         _: &String,
         io: &mut T,
-        req: Self::Request
+        req: Self::Request,
     ) -> std::io::Result<()>
-        where T: futures::AsyncWrite + Unpin + Send
+    where
+        T: futures::AsyncWrite + Unpin + Send,
     {
         use futures::AsyncWriteExt;
         let len = req.raw.len() as u32;
@@ -112,9 +106,10 @@ impl request_response::Codec for FrameCodec {
         &mut self,
         _: &String,
         io: &mut T,
-        res: Self::Response
+        res: Self::Response,
     ) -> std::io::Result<()>
-        where T: futures::AsyncWrite + Unpin + Send
+    where
+        T: futures::AsyncWrite + Unpin + Send,
     {
         use futures::AsyncWriteExt;
         io.write_all(&[res.ok as u8]).await?;
@@ -141,7 +136,7 @@ pub async fn start_network(
     rx: mpsc::Receiver<NetworkCommand>,
     hub_tx: mpsc::Sender<KnotMessage>,
     temp_peerid: bool,
-    port: u16
+    port: u16,
 ) {
     match run_network(rx, hub_tx, temp_peerid, port).await {
         Ok(_) => println!("[Network] Shutdown limpio"),
@@ -153,7 +148,7 @@ async fn run_network(
     mut command_rx: mpsc::Receiver<NetworkCommand>,
     hub_tx: mpsc::Sender<KnotMessage>,
     temp_peerid: bool,
-    port: u16
+    port: u16,
 ) -> Result<(), Box<dyn Error>> {
     let mut local_key = libp2p::identity::Keypair::generate_ed25519();
     if !temp_peerid {
@@ -171,7 +166,11 @@ async fn run_network(
 
     let mut swarm = SwarmBuilder::with_existing_identity(local_key)
         .with_tokio()
-        .with_tcp(tcp::Config::default(), noise::Config::new, yamux::Config::default)?
+        .with_tcp(
+            tcp::Config::default(),
+            noise::Config::new,
+            yamux::Config::default,
+        )?
         .with_quic_config(|mut config| {
             config.max_stream_data = 10_485_760;
             config.max_connection_data = 15_728_640;
@@ -179,13 +178,11 @@ async fn run_network(
             config
         })
         .with_other_transport(|key| {
-            Ok(
-                relay_transport
-                    .or_transport(libp2p::tcp::tokio::Transport::default())
-                    .upgrade(upgrade::Version::V1)
-                    .authenticate(noise::Config::new(key).unwrap())
-                    .multiplex(yamux::Config::default())
-            )
+            Ok(relay_transport
+                .or_transport(libp2p::tcp::tokio::Transport::default())
+                .upgrade(upgrade::Version::V1)
+                .authenticate(noise::Config::new(key).unwrap())
+                .multiplex(yamux::Config::default()))
         })?
         .with_behaviour(|key| {
             let peer_id = PeerId::from(key.public());
@@ -196,26 +193,25 @@ async fn run_network(
 
             // Identify
             let identify = identify::Behaviour::new(
-                identify::Config
-                    ::new("/knot/1.0.0".into(), key.public())
-                    .with_interval(Duration::from_secs(60))
+                identify::Config::new("/knot/1.0.0".into(), key.public())
+                    .with_interval(Duration::from_secs(60)),
             );
 
             let ping = ping::Behaviour::new(ping::Config::default());
 
             // Request/Response para BinaryFrame
             let frames = request_response::Behaviour::new(
-                vec![("/knot/frame/1.0.0".to_string(), request_response::ProtocolSupport::Full)],
-                request_response::Config
-                    ::default()
+                vec![(
+                    "/knot/frame/1.0.0".to_string(),
+                    request_response::ProtocolSupport::Full,
+                )],
+                request_response::Config::default()
                     .with_request_timeout(Duration::from_secs(20)) // Subimos a 20s
-                    .with_max_concurrent_streams(1000)
+                    .with_max_concurrent_streams(1000),
             );
 
-            let mdns = mdns::tokio::Behaviour::new(
-                mdns::Config::default(),
-                key.public().to_peer_id()
-            )?;
+            let mdns =
+                mdns::tokio::Behaviour::new(mdns::Config::default(), key.public().to_peer_id())?;
 
             Ok(KnotBehaviour {
                 identify,
@@ -228,9 +224,8 @@ async fn run_network(
             })
         })?
         .with_swarm_config(|c| {
-            c.with_idle_connection_timeout(
-                Duration::from_secs(60)
-            ).with_max_negotiating_inbound_streams(100) // Evita cuellos de botella
+            c.with_idle_connection_timeout(Duration::from_secs(60))
+                .with_max_negotiating_inbound_streams(100) // Evita cuellos de botella
         })
         .build();
 
@@ -297,12 +292,18 @@ async fn handle_swarm_event(
     event: SwarmEvent<KnotBehaviourEvent>,
     swarm: &mut libp2p::Swarm<KnotBehaviour>,
     peer_table: &mut PeerTable,
-    hub_tx: &mpsc::Sender<KnotMessage>
+    hub_tx: &mpsc::Sender<KnotMessage>,
 ) {
     match event {
         // ── Conexión establecida ───────────────────────────────────────
-        SwarmEvent::ConnectionEstablished { peer_id, endpoint, .. } => {
-            println!("[Network] Conectado a {} via {:?}", peer_id, endpoint.get_remote_address());
+        SwarmEvent::ConnectionEstablished {
+            peer_id, endpoint, ..
+        } => {
+            println!(
+                "[Network] Conectado a {} via {:?}",
+                peer_id,
+                endpoint.get_remote_address()
+            );
             let addr = endpoint.get_remote_address().clone();
             peer_table.entry(peer_id).or_default().push(addr.clone());
             // Anunciar al peer en Kademlia
@@ -327,7 +328,10 @@ async fn handle_swarm_event(
             );
         }
         SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {
-            eprintln!("[Network] Error al contactar al peer {:?}: {:?}", peer_id, error);
+            eprintln!(
+                "[Network] Error al contactar al peer {:?}: {:?}",
+                peer_id, error
+            );
         }
 
         // ── Eventos de comportamiento compuesto ────────────────────────
@@ -343,47 +347,66 @@ async fn handle_behaviour_event(
     event: KnotBehaviourEvent,
     swarm: &mut libp2p::Swarm<KnotBehaviour>,
     peer_table: &mut PeerTable,
-    hub_tx: &mpsc::Sender<KnotMessage>
+    hub_tx: &mpsc::Sender<KnotMessage>,
 ) {
     match event {
         // --- RELAY CLIENT EVENTS ---
-        KnotBehaviourEvent::RelayClient(
-            relay::client::Event::ReservationReqAccepted { relay_peer_id, .. },
-        ) => {
+        KnotBehaviourEvent::RelayClient(relay::client::Event::ReservationReqAccepted {
+            relay_peer_id,
+            ..
+        }) => {
             println!("[Network Relay] Reserva activa en Relay: {}", relay_peer_id);
         }
-        KnotBehaviourEvent::RelayClient(
-            relay::client::Event::InboundCircuitEstablished { src_peer_id, .. },
-        ) => {
+        KnotBehaviourEvent::RelayClient(relay::client::Event::InboundCircuitEstablished {
+            src_peer_id,
+            ..
+        }) => {
             eprintln!("[Network Relay] Circito creado via {}", src_peer_id);
         }
-        KnotBehaviourEvent::RelayClient(
-            relay::client::Event::OutboundCircuitEstablished { relay_peer_id, .. },
-        ) => {
-            println!("[Network Relay] Circuito de salida creado vía {}", relay_peer_id);
+        KnotBehaviourEvent::RelayClient(relay::client::Event::OutboundCircuitEstablished {
+            relay_peer_id,
+            ..
+        }) => {
+            println!(
+                "[Network Relay] Circuito de salida creado vía {}",
+                relay_peer_id
+            );
         }
 
         // --- DCUtR (HOLE PUNCHING) EVENTS ---
-        KnotBehaviourEvent::Dcutr(libp2p::dcutr::Event { remote_peer_id, result }) => {
-            match result {
-                Ok(_) => {
-                    println!("[Network] HOLE PUNCHING EXITOSO Conexión directa con {}", remote_peer_id);
-                    let _ = hub_tx.send(
-                        KnotMessage::Log(format!("P2P Directo con {}", remote_peer_id))
-                    ).await;
-                }
-                Err(e) => {
-                    eprintln!("[Network] Falló el upgrade directo con {}: {:?}", remote_peer_id, e);
-                }
+        KnotBehaviourEvent::Dcutr(libp2p::dcutr::Event {
+            remote_peer_id,
+            result,
+        }) => match result {
+            Ok(_) => {
+                println!(
+                    "[Network] HOLE PUNCHING EXITOSO Conexión directa con {}",
+                    remote_peer_id
+                );
+                let _ = hub_tx
+                    .send(KnotMessage::Log(format!(
+                        "P2P Directo con {}",
+                        remote_peer_id
+                    )))
+                    .await;
             }
-        }
+            Err(e) => {
+                eprintln!(
+                    "[Network] Falló el upgrade directo con {}: {:?}",
+                    remote_peer_id, e
+                );
+            }
+        },
 
         // --- mDNS: Peer discovered ---
         KnotBehaviourEvent::Mdns(mdns::Event::Discovered(list)) => {
             for (peer_id, addr) in list {
                 println!("[Network] mDNS: Nuevo peer local hallado: {}", peer_id);
                 // Lo añadimos a Kademlia para que el ruteo sepa dónde está
-                swarm.behaviour_mut().kademlia.add_address(&peer_id, addr.clone());
+                swarm
+                    .behaviour_mut()
+                    .kademlia
+                    .add_address(&peer_id, addr.clone());
                 // Lo registramos en nuestra tabla interna
                 peer_table.entry(peer_id).or_default().push(addr);
             }
@@ -398,12 +421,20 @@ async fn handle_behaviour_event(
         }
 
         // ── Identify: peer se identifica → actualizar tabla ────────────
-        KnotBehaviourEvent::Identify(
-            identify::Event::Received { peer_id, info, connection_id: _ },
-        ) => {
-            println!("[Network] Identify recibido de {}: agent={}", peer_id, info.agent_version);
+        KnotBehaviourEvent::Identify(identify::Event::Received {
+            peer_id,
+            info,
+            connection_id: _,
+        }) => {
+            println!(
+                "[Network] Identify recibido de {}: agent={}",
+                peer_id, info.agent_version
+            );
             for addr in &info.listen_addrs {
-                swarm.behaviour_mut().kademlia.add_address(&peer_id, addr.clone());
+                swarm
+                    .behaviour_mut()
+                    .kademlia
+                    .add_address(&peer_id, addr.clone());
                 peer_table.entry(peer_id).or_default().push(addr.clone());
             }
             // Lanzar bootstrap si es el primer peer conocido
@@ -413,37 +444,41 @@ async fn handle_behaviour_event(
             }
         }
 
-        KnotBehaviourEvent::Kademlia(kad::Event::RoutingUpdated { peer, addresses, .. }) => {
+        KnotBehaviourEvent::Kademlia(kad::Event::RoutingUpdated {
+            peer, addresses, ..
+        }) => {
             println!("[Network] DHT routing actualizado para {}", peer);
             for addr in addresses.iter() {
                 peer_table.entry(peer).or_default().push(addr.clone());
             }
         }
 
-        KnotBehaviourEvent::Kademlia(
-            kad::Event::OutboundQueryProgressed {
-                result: kad::QueryResult::Bootstrap(Ok(kad::BootstrapOk { num_remaining, .. })),
-                ..
-            },
-        ) => {
+        KnotBehaviourEvent::Kademlia(kad::Event::OutboundQueryProgressed {
+            result: kad::QueryResult::Bootstrap(Ok(kad::BootstrapOk { num_remaining, .. })),
+            ..
+        }) => {
             if num_remaining == 0 {
                 println!("[Network] Bootstrap Kademlia completado");
             }
         }
 
         // ── Request/Response: frame recibido de otro peer ──────────────
-        KnotBehaviourEvent::Frames(
-            request_response::Event::Message {
-                peer,
-                message: request_response::Message::Request { request, channel, .. },
-                connection_id: _,
-            },
-        ) => {
+        KnotBehaviourEvent::Frames(request_response::Event::Message {
+            peer,
+            message:
+                request_response::Message::Request {
+                    request, channel, ..
+                },
+            connection_id: _,
+        }) => {
             #[cfg(debug_assertions)]
             println!("[Network] Frame recibido de {}", peer);
 
             // Responder OK de inmediato
-            let _ = swarm.behaviour_mut().frames.send_response(channel, FrameResponse { ok: true });
+            let _ = swarm
+                .behaviour_mut()
+                .frames
+                .send_response(channel, FrameResponse { ok: true });
 
             if request.raw.len() >= 24 {
                 let mut header = [0u8; 24];
@@ -455,19 +490,20 @@ async fn handle_behaviour_event(
                 let frame = BinaryFrame::from_raw(&header, payload);
                 let from_ip = peer.to_string();
 
-                let _ = hub_tx.send(KnotMessage::NetworkData { from_ip, frame }).await;
+                let _ = hub_tx
+                    .send(KnotMessage::NetworkData { from_ip, frame })
+                    .await;
             } else {
                 eprintln!("[Network] Frame recibido demasiado corto");
             }
         }
 
-        KnotBehaviourEvent::Frames(
-            request_response::Event::Message {
-                peer,
-                message: request_response::Message::Response { response, .. },
-                connection_id: _,
-            },
-        ) => {
+        KnotBehaviourEvent::Frames(request_response::Event::Message {
+            peer,
+            message: request_response::Message::Response { response, .. },
+            connection_id: _,
+        }) =>
+        {
             #[cfg(debug_assertions)]
             if response.ok {
                 println!("[Network] Entrega confirmada por {}", peer);
@@ -476,9 +512,11 @@ async fn handle_behaviour_event(
             }
         }
 
-        KnotBehaviourEvent::Frames(
-            request_response::Event::OutboundFailure { peer, error, .. },
-        ) => {
+        KnotBehaviourEvent::Frames(request_response::Event::OutboundFailure {
+            peer,
+            error,
+            ..
+        }) => {
             eprintln!("[Network] Error enviando a {}: {:?}", peer, error);
         }
 
@@ -490,7 +528,7 @@ fn handle_outbound_by_u64(
     swarm: &mut libp2p::Swarm<KnotBehaviour>,
     peer_table: &PeerTable,
     target_u64: u64,
-    raw: Bytes
+    raw: Bytes,
 ) {
     let target = peer_table
         .keys()
@@ -505,7 +543,10 @@ fn handle_outbound_by_u64(
             println!("[Network] Frame enviado a {:?}", peer);
         }
         None => {
-            eprintln!("[Network] Sin ruta para peer_id={} (no descubierto)", target_u64);
+            eprintln!(
+                "[Network] Sin ruta para peer_id={} (no descubierto)",
+                target_u64
+            );
         }
     }
 }

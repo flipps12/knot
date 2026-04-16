@@ -1,6 +1,6 @@
 // src/utils/framing.rs
 
-use bytes::{Bytes, BytesMut, BufMut, Buf};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 
 #[derive(Debug)]
 pub struct BinaryFrame {
@@ -33,7 +33,13 @@ impl BinaryFrame {
         let _reserved = buf.get_u16();
         let payload = buf.split_to(buf.len()).freeze();
 
-        BinaryFrame { version, target, peer_id, app_id, payload }
+        BinaryFrame {
+            version,
+            target,
+            peer_id,
+            app_id,
+            payload,
+        }
     }
 
     pub fn from_raw(header: &[u8; 24], payload: Bytes) -> Self {
