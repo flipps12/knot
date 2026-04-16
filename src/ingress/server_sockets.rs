@@ -33,6 +33,7 @@ pub async fn start_managed_server(
                         Message::Status => {
                             let resp = ResponseTcp {
                                 response: "OK".into(),
+                                error: "".into(),
                             };
                             let _ = framed.send(serde_json::to_string(&resp).unwrap()).await;
                         }
@@ -42,6 +43,7 @@ pub async fn start_managed_server(
                             // let _ = framed.send(format!("OK: Registered ID {}", app_id)).await;
                             let resp = ResponseTcp {
                                 response: app_id.to_string(),
+                                error: "".into(),
                             };
                             let _ = framed.send(serde_json::to_string(&resp).unwrap()).await;
                             return;
@@ -52,6 +54,7 @@ pub async fn start_managed_server(
 
                             let resp = ResponseTcp {
                                 response: "OK".into(),
+                                error: "".into(),
                             };
                             let _ = framed.send(serde_json::to_string(&resp).unwrap()).await;
                             return;
@@ -60,16 +63,44 @@ pub async fn start_managed_server(
                             relay_addr,
                             relay_id,
                         } => {
+                            let parsed_addr = relay_addr.parse();
+                            let parsed_id = relay_id.parse();
+
                             let _ = tx_clone
                                 .send(CentralEvent::ConnectRelay {
-                                    relay_addr: relay_addr.parse().unwrap(),
-                                    relay_peer_id: relay_id.parse().unwrap(),
+                                    relay_addr: match parsed_addr {
+                                        Ok(parsed_addr) => parsed_addr,
+                                        Err(err) => {
+                                            let resp = ResponseTcp {
+                                                response: "".into(),
+                                                error: err.to_string(),
+                                            };
+                                            let _ = framed
+                                                .send(serde_json::to_string(&resp).unwrap())
+                                                .await;
+                                            return;
+                                        }
+                                    },
+                                    relay_peer_id: match parsed_id {
+                                        Ok(parsed_id) => parsed_id,
+                                        Err(err) => {
+                                            let resp = ResponseTcp {
+                                                response: "".into(),
+                                                error: err.to_string(),
+                                            };
+                                            let _ = framed
+                                                .send(serde_json::to_string(&resp).unwrap())
+                                                .await;
+                                            return;
+                                        }
+                                    },
                                 })
                                 .await;
                             // let _ = framed.send("Relay request sent").await;
 
                             let resp = ResponseTcp {
                                 response: "OK".into(),
+                                error: "".into(),
                             };
                             let _ = framed.send(serde_json::to_string(&resp).unwrap()).await;
                             return;
@@ -82,6 +113,7 @@ pub async fn start_managed_server(
 
                             let resp = ResponseTcp {
                                 response: "OK".into(),
+                                error: "".into(),
                             };
                             let _ = framed.send(serde_json::to_string(&resp).unwrap()).await;
                             return;
