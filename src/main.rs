@@ -1,15 +1,15 @@
 // src/main.rs
+mod core;
 mod ingress;
 mod network;
-mod core;
 mod utils;
 
-use crate::ingress::socket::{ IngressCommand, start_ingress };
-use crate::network::swarm::{ NetworkCommand, NetworkResponse, start_network };
+use crate::ingress::socket::{IngressCommand, start_ingress};
+use crate::network::swarm::{NetworkCommand, NetworkResponse, start_network};
 use crate::utils::framing::BinaryFrame;
 
+use libp2p::{Multiaddr, PeerId};
 use std::env;
-use libp2p::{ Multiaddr, PeerId };
 use tokio::sync::mpsc;
 
 #[derive(Debug)]
@@ -65,7 +65,7 @@ async fn main() {
     let port_network = args
         .get(3)
         .map(|s| s.parse::<u16>().expect("Puerto Network inválido"))
-        .unwrap_or(13013); // Default P2P
+        .unwrap_or(0); // Default P2P
 
     let temp_peerid = args
         .get(4)
@@ -97,8 +97,18 @@ async fn main() {
     let net_hub_tx = hub_tx.clone();
 
     // Spawn Workers
-    tokio::spawn(start_ingress(to_ing_rx, ing_hub_tx, port_ingress, port_ingress_binary));
-    tokio::spawn(start_network(to_net_rx, net_hub_tx, temp_peerid, port_network));
+    tokio::spawn(start_ingress(
+        to_ing_rx,
+        ing_hub_tx,
+        port_ingress,
+        port_ingress_binary,
+    ));
+    tokio::spawn(start_network(
+        to_net_rx,
+        net_hub_tx,
+        temp_peerid,
+        port_network,
+    ));
 
     // For debug, Core is this
     loop {
@@ -112,15 +122,15 @@ async fn main() {
                             println!("[Core] Frames procesados: {}", count);
                         }
 
-                        
+
                         let target_u64 = frame.peer_id;
 
                         #[cfg(debug_assertions)]
                         println!("[Core] Ingress -> Network PeerID (u64): {}", target_u64);
 
                         // 3. Enviamos el comando a la red
-                        let _ = to_net_tx.send(NetworkCommand::SendFrame { 
-                            target_u64, 
+                        let _ = to_net_tx.send(NetworkCommand::SendFrame {
+                            target_u64,
                             frame: frame.encode()
                         }).await;
                     }
@@ -145,8 +155,8 @@ async fn main() {
                             println!("[Core] Frames procesados: {}", count_rec);
                         }
 
-                        let _ = to_ing_tx.send(IngressCommand::SendFrameToClient { 
-                            from_ip, 
+                        let _ = to_ing_tx.send(IngressCommand::SendFrameToClient {
+                            from_ip,
                             frame: frame.encode()
                         }).await;
                     }
@@ -170,7 +180,7 @@ async fn main() {
                 }
             }
             _ = tokio::signal::ctrl_c() => {
-                break; 
+                break;
             }
         }
     }
