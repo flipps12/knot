@@ -4,6 +4,7 @@ mod ingress;
 mod network;
 mod utils;
 
+use crate::core::controller::start_core;
 use crate::ingress::socket::{IngressCommand, start_ingress};
 use crate::network::swarm::{NetworkCommand, NetworkResponse, start_network};
 use crate::utils::framing::BinaryFrame;
@@ -45,10 +46,6 @@ async fn main() {
     #[cfg(debug_assertions)]
     println!("Debug mode");
 
-    // for benchamrk
-    let mut count = 0;
-    let mut count_rec = 0;
-
     // Args for ports
     let args: Vec<String> = env::args().collect();
 
@@ -82,7 +79,7 @@ async fn main() {
 
     // Main Channel
     // Ingress -> Core <- Network
-    let (hub_tx, mut hub_rx) = mpsc::channel::<KnotMessage>(10000);
+    let (hub_tx, hub_rx) = mpsc::channel::<KnotMessage>(10000);
 
     // Secondary Channel
     // Core -> Network
@@ -110,80 +107,7 @@ async fn main() {
         port_network,
     ));
 
-    // For debug, Core is this
-    loop {
-        tokio::select! {
-            Some(message) = hub_rx.recv() => {
-                match message {
-                    KnotMessage::ClientData { from_ip: _, frame } => {
-                        // for benchmark
-                        count += 1;
-                        if count % 10000 == 0 {
-                            println!("[Core] Frames procesados: {}", count);
-                        }
-
-
-                        let target_u64 = frame.peer_id;
-
-                        #[cfg(debug_assertions)]
-                        println!("[Core] Ingress -> Network PeerID (u64): {}", target_u64);
-
-                        // 3. Enviamos el comando a la red
-                        let _ = to_net_tx.send(NetworkCommand::SendFrame {
-                            target_u64,
-                            frame: frame.encode()
-                        }).await;
-                    }
-                    KnotMessage::ConnectToNetwork { addr } => {
-                        let addr_parsed: Multiaddr = addr.parse().expect("Invalid Addr");
-                        let _ = to_net_tx.send(NetworkCommand::DialAddress(addr_parsed)).await;
-                    }
-                    KnotMessage::DiscoverNetwork { peerid } => {
-                        let peerid_parsed: PeerId = peerid.parse().expect("Invalid Addr");
-                        let _ = to_net_tx.send(NetworkCommand::LookupPeer(peerid_parsed)).await;
-                    }
-                    KnotMessage::GetPeersNetwork => {
-                        let _ = to_net_tx.send(NetworkCommand::GetPeers).await;
-                    }
-                    KnotMessage::ConnectRelay { relay_addr, relay_peer_id} => {
-                        let _ = to_net_tx.send(NetworkCommand::ConnectRelay { relay_addr, relay_peer_id }).await;
-                    }
-                    KnotMessage::NetworkData { from_ip, frame } => {
-                        // for benchmark
-                        count_rec += 1;
-                        if count_rec % 10000 == 0 {
-                            println!("[Core] Frames procesados: {}", count_rec);
-                        }
-
-                        let _ = to_ing_tx.send(IngressCommand::SendFrameToClient {
-                            from_ip,
-                            frame: frame.encode()
-                        }).await;
-                    }
-                    KnotMessage::NetworkResponse(response) => {
-                        match response {
-                            NetworkResponse::PeersList(list) => {
-                                println!("{:?}", list);
-                            }
-                            NetworkResponse::CommandAccepted => {
-                                // unused
-                            }
-                        }
-                    }
-                    KnotMessage::Log(msg) => {
-                        println!("[LOG GLOBAL]: {}", msg);
-                    }
-                    KnotMessage::Shutdown => {
-                        println!("Apagando Knot...");
-                        break;
-                    }
-                }
-            }
-            _ = tokio::signal::ctrl_c() => {
-                break;
-            }
-        }
-    }
+    start_core(to_net_tx, to_ing_tx, hub_rx).await;
 
     println!("\n\n[Knot] Shutting down");
 }
