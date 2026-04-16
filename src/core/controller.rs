@@ -1,17 +1,25 @@
 // src/core/controllar.rs
 
-use tokio::sync::mpsc::{Receiver, Sender};
 use libp2p::{Multiaddr, PeerId};
+use tokio::sync::mpsc::{Receiver, Sender};
 
-use crate::{KnotMessage, ingress::socket::IngressCommand, network::swarm::{NetworkCommand, NetworkResponse}};
+use crate::{
+    KnotMessage,
+    ingress::socket::IngressCommand,
+    network::swarm::{NetworkCommand, NetworkResponse},
+};
 
-pub async fn start_core(to_net_tx: Sender<NetworkCommand>, to_ing_tx: Sender<IngressCommand>, mut hub_rx: Receiver<KnotMessage>) {
+pub async fn start_core(
+    to_net_tx: Sender<NetworkCommand>,
+    to_ing_tx: Sender<IngressCommand>,
+    mut hub_rx: Receiver<KnotMessage>,
+) {
     loop {
         tokio::select! {
             Some(message) = hub_rx.recv() => {
                 match message {
                     KnotMessage::ClientData { from_ip: _, frame } => {
-                    
+
 
 
                         let target_u64 = frame.peer_id;
