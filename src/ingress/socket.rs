@@ -1,14 +1,15 @@
 // src/ingress/socket.rs
 
-use bytes::{Bytes, BytesMut};
-use serde::{Deserialize, Serialize};
+use bytes::{ Bytes, BytesMut };
+use libp2p::{Multiaddr, PeerId};
+use serde::{ Deserialize, Serialize };
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{ Mutex, mpsc };
 
 use crate::KnotMessage;
 use crate::ingress::client_sockets::send_to_local_app;
-use crate::ingress::server_sockets::{start_binary_data_server, start_managed_server};
+use crate::ingress::server_sockets::{ start_binary_data_server, start_managed_server };
 use crate::utils::framing::BinaryFrame;
 
 // El estado compartido que guardará todos los canales de retorno
@@ -19,8 +20,7 @@ pub type ConnectionMap = Arc<Mutex<HashMap<u16, mpsc::Sender<Bytes>>>>;
 #[serde(tag = "command", rename_all = "snake_case")]
 pub enum Message {
     Status,
-    #[serde(rename = "newappname")]
-    Register {
+    #[serde(rename = "newappname")] Register {
         name: String,
         port: u16,
     },
@@ -30,11 +30,11 @@ pub enum Message {
     Discover {
         peer_id: String,
     },
-    #[serde(rename = "connectrelay")]
-    ConnectRelay {
+    #[serde(rename = "connectrelay")] ConnectRelay {
         relay_addr: String,
         relay_id: String,
     },
+    #[serde(rename = "getpeers")] GetPeers,
 }
 
 #[derive(Debug)]
@@ -47,7 +47,8 @@ pub enum CentralEvent {
         addr: String,
     }, // dial peer with address
     Discover {
-        peerid: String,
+        peerid: PeerId,
+        return_tx: tokio::sync::oneshot::Sender<String>,
     }, // use dht for discover address with a peerid
     RouteBinary {
         from_ip: String,
@@ -57,6 +58,7 @@ pub enum CentralEvent {
         relay_addr: libp2p::Multiaddr,
         relay_peer_id: libp2p::PeerId,
     },
+    GetPeers(tokio::sync::oneshot::Sender<HashMap<PeerId, Vec<Multiaddr>>>),
 }
 
 #[derive(Serialize, Debug)]
@@ -67,14 +69,17 @@ pub struct ResponseTcp {
 }
 
 pub enum IngressCommand {
-    SendFrameToClient { from_ip: String, frame: Bytes },
+    SendFrameToClient {
+        from_ip: String,
+        frame: Bytes,
+    },
 }
 
 pub async fn start_ingress(
     mut rx: mpsc::Receiver<IngressCommand>,
     hub_tx: mpsc::Sender<KnotMessage>,
     port: u16,
-    binary_port: u16,
+    binary_port: u16
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let (central_tx, mut central_rx) = mpsc::channel::<CentralEvent>(100);
 
@@ -100,12 +105,12 @@ pub async fn start_ingress(
 
                     let reg = registry_for_central.lock().await;
                     if let Some(&target_port) = reg.get(&app_id) {
-                        println!(
-                            "  -> Reenviando a aplicación local en puerto: {}",
-                            target_port
-                        );
-                        send_to_local_app(Arc::clone(&conns), target_port, decoded_frame.payload)
-                            .await;
+                        println!("  -> Reenviando a aplicación local en puerto: {}", target_port);
+                        send_to_local_app(
+                            Arc::clone(&conns),
+                            target_port,
+                            decoded_frame.payload
+                        ).await;
                     } else {
                         println!("  -> AppID {} not registered from {}.", app_id, from_ip);
                     }
@@ -131,32 +136,25 @@ pub async fn start_ingress(
                     println!("[Ingress] Sending Connect command to [Network]: {}", addr);
                     let _ = hub_tx.send(KnotMessage::ConnectToNetwork { addr }).await;
                 }
-                CentralEvent::Discover { peerid } => {
-                    println!(
-                        "[Ingress] Sending Discover command to [Network]: {}",
-                        peerid
-                    );
-                    let _ = hub_tx.send(KnotMessage::DiscoverNetwork { peerid }).await;
+                CentralEvent::Discover { peerid, return_tx } => {
+                    println!("[Ingress] Sending Discover command to [Network]: {}", peerid);
+                    let _ = hub_tx.send(KnotMessage::DiscoverNetwork { peerid, return_tx }).await;
                 }
                 CentralEvent::RouteBinary { from_ip, frame } => {
                     #[cfg(debug_assertions)]
                     println!("  Data form {} to {}", from_ip, frame.peer_id);
 
                     // Aquí buscarías en tu Registro quién tiene ese PeerID y le mandas el SendRaw
-                    let _ = hub_tx
-                        .send(KnotMessage::ClientData { from_ip, frame })
-                        .await;
+                    let _ = hub_tx.send(KnotMessage::ClientData { from_ip, frame }).await;
                 }
-                CentralEvent::ConnectRelay {
-                    relay_addr,
-                    relay_peer_id,
-                } => {
-                    let _ = hub_tx
-                        .send(KnotMessage::ConnectRelay {
-                            relay_addr,
-                            relay_peer_id,
-                        })
-                        .await;
+                CentralEvent::ConnectRelay { relay_addr, relay_peer_id } => {
+                    let _ = hub_tx.send(KnotMessage::ConnectRelay {
+                        relay_addr,
+                        relay_peer_id,
+                    }).await;
+                }
+                CentralEvent::GetPeers(oneshot) => {
+                    let _ = hub_tx.send(KnotMessage::GetPeersNetwork(oneshot)).await;
                 }
             }
         }
