@@ -61,6 +61,7 @@ pub enum CentralEvent {
 
 #[derive(Serialize, Debug)]
 pub struct ResponseTcp {
+    pub command: String,
     pub response: String,
     pub error: String,
 }
@@ -120,9 +121,11 @@ pub async fn start_ingress(
         while let Some(event) = central_rx.recv().await {
             match event {
                 CentralEvent::Register { app_id, port } => {
-                    println!("[Ingress] new appname on hashmap: {} -> {}", app_id, port);
                     let mut reg = reg_handle.lock().await;
-                    reg.insert(app_id, port);
+                    if !reg.contains_key(&app_id) {
+                        reg.insert(app_id, port);
+                        println!("[Ingress] new appname on hashmap: {} -> {}", app_id, port);
+                    }
                 }
                 CentralEvent::Connect { addr } => {
                     println!("[Ingress] Sending Connect command to [Network]: {}", addr);

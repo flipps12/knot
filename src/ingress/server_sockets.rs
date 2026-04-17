@@ -1,19 +1,19 @@
 // src/ingress/server_sockets.rs
 
 use bytes::BytesMut;
-use futures::{SinkExt, StreamExt};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use futures::{ SinkExt, StreamExt };
+use tokio::io::{ AsyncReadExt, AsyncWriteExt };
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
-use tokio_util::codec::{Framed, LinesCodec};
+use tokio_util::codec::{ Framed, LinesCodec };
 
-use crate::ingress::socket::{CentralEvent, Message, ResponseTcp};
+use crate::ingress::socket::{ CentralEvent, Message, ResponseTcp };
 use crate::utils::framing::BinaryFrame;
 use crate::utils::tou64::string_to_u64_rust;
 
 pub async fn start_managed_server(
     central_tx: mpsc::Sender<CentralEvent>,
-    port: u16,
+    port: u16
 ) -> Result<(), Box<dyn std::error::Error>> {
     let listener = TcpListener::bind(format!("127.0.0.1:{}", port)).await?;
 
@@ -32,6 +32,7 @@ pub async fn start_managed_server(
                     match msg {
                         Message::Status => {
                             let resp = ResponseTcp {
+                                command: "status".into(),
                                 response: "OK".into(),
                                 error: "".into(),
                             };
@@ -42,85 +43,85 @@ pub async fn start_managed_server(
                             let _ = tx_clone.send(CentralEvent::Register { app_id, port }).await;
                             // let _ = framed.send(format!("OK: Registered ID {}", app_id)).await;
                             let resp = ResponseTcp {
+                                command: "register".into(),
                                 response: app_id.to_string(),
                                 error: "".into(),
                             };
                             let _ = framed.send(serde_json::to_string(&resp).unwrap()).await;
-                            return;
                         }
                         Message::Connect { addr } => {
                             let _ = tx_clone.send(CentralEvent::Connect { addr }).await;
                             // let _ = framed.send("Connecting...").await;
 
                             let resp = ResponseTcp {
+                                command: "connect".into(),
                                 response: "OK".into(),
                                 error: "".into(),
                             };
                             let _ = framed.send(serde_json::to_string(&resp).unwrap()).await;
-                            return;
                         }
-                        Message::ConnectRelay {
-                            relay_addr,
-                            relay_id,
-                        } => {
+                        Message::ConnectRelay { relay_addr, relay_id } => {
                             let parsed_addr = relay_addr.parse();
                             let parsed_id = relay_id.parse();
 
-                            let _ = tx_clone
-                                .send(CentralEvent::ConnectRelay {
-                                    relay_addr: match parsed_addr {
-                                        Ok(parsed_addr) => parsed_addr,
-                                        Err(err) => {
-                                            let resp = ResponseTcp {
-                                                response: "".into(),
-                                                error: err.to_string(),
-                                            };
-                                            let _ = framed
-                                                .send(serde_json::to_string(&resp).unwrap())
-                                                .await;
-                                            return;
-                                        }
-                                    },
-                                    relay_peer_id: match parsed_id {
-                                        Ok(parsed_id) => parsed_id,
-                                        Err(err) => {
-                                            let resp = ResponseTcp {
-                                                response: "".into(),
-                                                error: err.to_string(),
-                                            };
-                                            let _ = framed
-                                                .send(serde_json::to_string(&resp).unwrap())
-                                                .await;
-                                            return;
-                                        }
-                                    },
-                                })
-                                .await;
+                            let _ = tx_clone.send(CentralEvent::ConnectRelay {
+                                relay_addr: match parsed_addr {
+                                    Ok(parsed_addr) => parsed_addr,
+                                    Err(err) => {
+                                        let resp = ResponseTcp {
+                                            command: "connectrelay".into(),
+                                            response: "".into(),
+                                            error: err.to_string(),
+                                        };
+                                        let _ = framed.send(
+                                            serde_json::to_string(&resp).unwrap()
+                                        ).await;
+                                        return;
+                                    }
+                                },
+                                relay_peer_id: match parsed_id {
+                                    Ok(parsed_id) => parsed_id,
+                                    Err(err) => {
+                                        let resp = ResponseTcp {
+                                            command: "connectrelay".into(),
+                                            response: "".into(),
+                                            error: err.to_string(),
+                                        };
+                                        let _ = framed.send(
+                                            serde_json::to_string(&resp).unwrap()
+                                        ).await;
+                                        return;
+                                    }
+                                },
+                            }).await;
                             // let _ = framed.send("Relay request sent").await;
 
                             let resp = ResponseTcp {
+                                command: "connectrelay".into(),
                                 response: "OK".into(),
                                 error: "".into(),
                             };
                             let _ = framed.send(serde_json::to_string(&resp).unwrap()).await;
-                            return;
                         }
                         Message::Discover { peer_id } => {
-                            let _ = tx_clone
-                                .send(CentralEvent::Discover { peerid: peer_id })
-                                .await;
+                            let _ = tx_clone.send(CentralEvent::Discover { peerid: peer_id }).await;
                             // let _ = framed.send("Discovery started").await;
 
                             let resp = ResponseTcp {
+                                command: "discover".into(),
                                 response: "OK".into(),
                                 error: "".into(),
                             };
                             let _ = framed.send(serde_json::to_string(&resp).unwrap()).await;
-                            return;
                         }
                     }
                 } else {
-                    let _ = framed.send("ERROR: Invalid Command or Params").await;
+                    let resp = ResponseTcp {
+                        command: "server".into(),
+                        response: "".into(),
+                        error: "Error unknow command".into(),
+                    };
+                    let _ = framed.send(serde_json::to_string(&resp).unwrap()).await;
                 }
             }
         });
@@ -129,7 +130,7 @@ pub async fn start_managed_server(
 
 pub async fn start_binary_data_server(
     central_tx: mpsc::Sender<CentralEvent>,
-    port: u16,
+    port: u16
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let listener = TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
 
@@ -175,13 +176,13 @@ pub async fn start_binary_data_server(
                 }
 
                 // 6. Enviar a la Central
-                if tx
-                    .send(CentralEvent::RouteBinary {
-                        from_ip: addr.to_string(),
-                        frame,
-                    })
-                    .await
-                    .is_err()
+                if
+                    tx
+                        .send(CentralEvent::RouteBinary {
+                            from_ip: addr.to_string(),
+                            frame,
+                        }).await
+                        .is_err()
                 {
                     break;
                 }
