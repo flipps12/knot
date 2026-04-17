@@ -1,10 +1,13 @@
 // src/ingress/server_sockets.rs
 
+use std::collections::HashMap;
+
 use bytes::BytesMut;
 use futures::{ SinkExt, StreamExt };
+use libp2p::{Multiaddr, PeerId};
 use tokio::io::{ AsyncReadExt, AsyncWriteExt };
 use tokio::net::TcpListener;
-use tokio::sync::mpsc;
+use tokio::sync::{ mpsc, oneshot };
 use tokio_util::codec::{ Framed, LinesCodec };
 
 use crate::ingress::socket::{ CentralEvent, Message, ResponseTcp };
@@ -104,13 +107,69 @@ pub async fn start_managed_server(
                             let _ = framed.send(serde_json::to_string(&resp).unwrap()).await;
                         }
                         Message::Discover { peer_id } => {
-                            let _ = tx_clone.send(CentralEvent::Discover { peerid: peer_id }).await;
-                            // let _ = framed.send("Discovery started").await;
+                            let parsed_id: PeerId = match peer_id.parse() {
+                                Ok(peer_id) => peer_id,
+                                Err(err) => {
+                                    let resp = ResponseTcp {
+                                            command: "discover".into(),
+                                            response: "".into(),
+                                            error: err.to_string(),
+                                        };
+                                        let _ = framed.send(
+                                            serde_json::to_string(&resp).unwrap()
+                                        ).await;
+                                    return;
+                                },
+                            };
 
-                            let resp = ResponseTcp {
-                                command: "discover".into(),
-                                response: "OK".into(),
-                                error: "".into(),
+                            let (resp_tx, resp_rx) = oneshot::channel::<String>();
+
+                            let _ = tx_clone.send(CentralEvent::Discover {
+                                peerid: parsed_id,
+                                return_tx: resp_tx,
+                            }).await;
+
+                            // 2. Esperamos la respuesta del Core/Worker B
+                            let response_from_core = resp_rx.await;
+
+                            // 3. Respondemos al cliente TCP original
+                            let resp = match response_from_core {
+                                Ok(response) =>
+                                    ResponseTcp {
+                                        command: "discover".into(),
+                                        response: format!("{:?}", response),
+                                        error: "".into(),
+                                    },
+                                Err(_) =>
+                                    ResponseTcp {
+                                        command: "discover".into(),
+                                        response: "".into(),
+                                        error: "Core dropped the responder".into(),
+                                    },
+                            };
+                            let _ = framed.send(serde_json::to_string(&resp).unwrap()).await;
+                        }
+                        Message::GetPeers => {
+                            let (resp_tx, resp_rx) = oneshot::channel::<HashMap<PeerId, Vec<Multiaddr>>>();
+
+                            let _ = tx_clone.send(CentralEvent::GetPeers(resp_tx)).await;
+
+                            let response_from_core = resp_rx.await;
+
+                            // 3. Respondemos al cliente TCP original
+                            let resp = match response_from_core {
+                                Ok(response) =>
+                                    ResponseTcp {
+                                        command: "getpeers".into(),
+                                        response: format!("{:?}", response),
+                                        error: "".into(),
+                                    },
+                                Err(_) =>
+                                    ResponseTcp {
+                                        command: "getpeers".into(),
+                                        response: "".into(),
+                                        error: "Core dropped the responder".into(),
+                                    },
                             };
                             let _ = framed.send(serde_json::to_string(&resp).unwrap()).await;
                         }

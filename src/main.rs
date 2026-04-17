@@ -5,11 +5,12 @@ mod network;
 mod utils;
 
 use crate::core::controller::start_core;
-use crate::ingress::socket::{IngressCommand, start_ingress};
-use crate::network::swarm::{NetworkCommand, NetworkResponse, start_network};
+use crate::ingress::socket::{ IngressCommand, start_ingress };
+use crate::network::swarm::{ NetworkCommand, NetworkResponse, start_network };
 use crate::utils::framing::BinaryFrame;
 
-use libp2p::{Multiaddr, PeerId};
+use libp2p::{ Multiaddr, PeerId };
+use std::collections::HashMap;
 use std::env;
 use tokio::sync::mpsc;
 
@@ -24,9 +25,10 @@ pub enum KnotMessage {
         addr: String,
     },
     DiscoverNetwork {
-        peerid: String,
+        peerid: PeerId,
+        return_tx: tokio::sync::oneshot::Sender<String>,
     },
-    GetPeersNetwork,
+    GetPeersNetwork(tokio::sync::oneshot::Sender<HashMap<PeerId, Vec<Multiaddr>>>),
     ConnectRelay {
         relay_addr: Multiaddr,
         relay_peer_id: PeerId,
@@ -94,18 +96,8 @@ async fn main() {
     let net_hub_tx = hub_tx.clone();
 
     // Spawn Workers
-    tokio::spawn(start_ingress(
-        to_ing_rx,
-        ing_hub_tx,
-        port_ingress,
-        port_ingress_binary,
-    ));
-    tokio::spawn(start_network(
-        to_net_rx,
-        net_hub_tx,
-        temp_peerid,
-        port_network,
-    ));
+    tokio::spawn(start_ingress(to_ing_rx, ing_hub_tx, port_ingress, port_ingress_binary));
+    tokio::spawn(start_network(to_net_rx, net_hub_tx, temp_peerid, port_network));
 
     start_core(to_net_tx, to_ing_tx, hub_rx).await;
 
