@@ -7,8 +7,8 @@ use libp2p::{
     Multiaddr,
     PeerId,
     SwarmBuilder,
-    Transport,
-    core::upgrade,
+    // Transport,
+    // core::upgrade,
     identify,
     identity,
     kad,
@@ -162,7 +162,7 @@ async fn run_network(
         local_key = load_or_create_identity();
     }
     let local_peer_id = PeerId::from(local_key.public());
-    let (relay_transport, relay_client) = relay::client::new(local_peer_id);
+    // let (relay_transport, relay_client) = relay::client::new(local_peer_id);
     println!("[Network] Local Peer ID: {}", local_peer_id);
 
     let mut quic_config = libp2p_quic::Config::new(&local_key);
@@ -180,16 +180,8 @@ async fn run_network(
             config.max_idle_timeout = 30_000;
             config
         })
-        .with_other_transport(|key| {
-            Ok(
-                relay_transport
-                    .or_transport(libp2p::tcp::tokio::Transport::default())
-                    .upgrade(upgrade::Version::V1)
-                    .authenticate(noise::Config::new(key).unwrap())
-                    .multiplex(yamux::Config::default())
-            )
-        })?
-        .with_behaviour(|key| {
+        .with_relay_client(noise::Config::new, yamux::Config::default)?
+        .with_behaviour(|key, relay_behaviour| {
             let peer_id = PeerId::from(key.public());
 
             // Kademlia
@@ -225,7 +217,7 @@ async fn run_network(
                 kademlia,
                 frames,
                 mdns,
-                relay_client,
+                relay_client: relay_behaviour,
                 dcutr: libp2p::dcutr::Behaviour::new(local_peer_id),
             })
         })?
