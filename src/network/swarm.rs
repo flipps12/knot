@@ -8,9 +8,8 @@ use libp2p::{
     PeerId,
     SwarmBuilder,
     Transport,
-    core::upgrade,
     identify,
-    identity,
+    identity::{self, Keypair},
     kad,
     mdns,
     noise,
@@ -162,7 +161,7 @@ async fn run_network(
         local_key = load_or_create_identity();
     }
     let local_peer_id = PeerId::from(local_key.public());
-    let (relay_transport, relay_client) = relay::client::new(local_peer_id);
+    // let (relay_transport, relay_client) = relay::client::new(local_peer_id);
     println!("[Network] Local Peer ID: {}", local_peer_id);
 
     let mut quic_config = libp2p_quic::Config::new(&local_key);
@@ -173,23 +172,21 @@ async fn run_network(
 
     let mut swarm = SwarmBuilder::with_existing_identity(local_key)
         .with_tokio()
-        .with_tcp(tcp::Config::default(), noise::Config::new, yamux::Config::default)?
         .with_quic_config(|mut config| {
             config.max_stream_data = 10_485_760;
             config.max_connection_data = 15_728_640;
             config.max_idle_timeout = 30_000;
             config
         })
+        //.with_tcp(tcp::Config::default(), noise::Config::new, yamux::Config::default)?
         .with_other_transport(|key| {
-            Ok(
-                relay_transport
-                    .or_transport(libp2p::tcp::tokio::Transport::default())
-                    .upgrade(upgrade::Version::V1)
-                    .authenticate(noise::Config::new(key).unwrap())
-                    .multiplex(yamux::Config::default())
-            )
+            tcp::tokio::Transport::new(tcp::Config::default())
+                .upgrade(libp2p::core::upgrade::Version::V1Lazy)
+                .authenticate(noise::Config::new(key).expect("Noise key generation failed"))
+                .multiplex(yamux::Config::default())
         })?
-        .with_behaviour(|key| {
+        .with_relay_client(noise::Config::new, yamux::Config::default)?
+        .with_behaviour(|key: &Keypair, relay_behaviour| {
             let peer_id = PeerId::from(key.public());
 
             // Kademlia
@@ -225,7 +222,7 @@ async fn run_network(
                 kademlia,
                 frames,
                 mdns,
-                relay_client,
+                relay_client: relay_behaviour,
                 dcutr: libp2p::dcutr::Behaviour::new(local_peer_id),
             })
         })?
