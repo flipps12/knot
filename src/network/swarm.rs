@@ -7,10 +7,10 @@ use libp2p::{
     Multiaddr,
     PeerId,
     SwarmBuilder,
-    // Transport,
-    // core::upgrade,
+    Transport,
+    core::upgrade,
     identify,
-    identity,
+    identity::{self, Keypair},
     kad,
     mdns,
     noise,
@@ -173,15 +173,21 @@ async fn run_network(
 
     let mut swarm = SwarmBuilder::with_existing_identity(local_key)
         .with_tokio()
-        .with_tcp(tcp::Config::default(), noise::Config::new, yamux::Config::default)?
         .with_quic_config(|mut config| {
             config.max_stream_data = 10_485_760;
             config.max_connection_data = 15_728_640;
             config.max_idle_timeout = 30_000;
             config
         })
+        //.with_tcp(tcp::Config::default(), noise::Config::new, yamux::Config::default)?
+        .with_other_transport(|key| {
+            tcp::tokio::Transport::new(tcp::Config::default())
+                .upgrade(libp2p::core::upgrade::Version::V1Lazy)
+                .authenticate(noise::Config::new(key).expect("Noise key generation failed"))
+                .multiplex(yamux::Config::default())
+        })?
         .with_relay_client(noise::Config::new, yamux::Config::default)?
-        .with_behaviour(|key, relay_behaviour| {
+        .with_behaviour(|key: &Keypair, relay_behaviour| {
             let peer_id = PeerId::from(key.public());
 
             // Kademlia
