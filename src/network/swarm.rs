@@ -8,7 +8,6 @@ use libp2p::{
     PeerId,
     SwarmBuilder,
     Transport,
-    core::upgrade,
     identify,
     identity::{self, Keypair},
     kad,
