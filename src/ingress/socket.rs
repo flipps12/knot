@@ -1,7 +1,7 @@
 // src/ingress/socket.rs
 
 use bytes::{ Bytes, BytesMut };
-use libp2p::{Multiaddr, PeerId};
+use libp2p::{ Multiaddr, PeerId };
 use serde::{ Deserialize, Serialize };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -19,6 +19,8 @@ pub type ConnectionMap = Arc<Mutex<HashMap<u16, mpsc::Sender<Bytes>>>>;
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "command", rename_all = "snake_case")]
 pub enum Message {
+    Protocol,
+    #[serde(rename = "getcommands")] GetCommands,
     Status,
     #[serde(rename = "newappname")] Register {
         name: String,
@@ -35,6 +37,23 @@ pub enum Message {
         relay_id: String,
     },
     #[serde(rename = "getpeers")] GetPeers,
+    #[serde(rename = "getpeerid")] GetPeerId,
+}
+
+impl Message {
+    pub fn command_list() -> Vec<&'static str> {
+        vec![
+            "protocol",
+            "getcommands",
+            "status",
+            "newappname",
+            "connect",
+            "discover",
+            "connectrelay",
+            "getpeers",
+            "getpeerid",
+        ]
+    }
 }
 
 #[derive(Debug)]
@@ -59,6 +78,7 @@ pub enum CentralEvent {
         relay_peer_id: libp2p::PeerId,
     },
     GetPeers(tokio::sync::oneshot::Sender<HashMap<PeerId, Vec<Multiaddr>>>),
+    GetLocalPeerId(tokio::sync::oneshot::Sender<PeerId>),
 }
 
 #[derive(Serialize, Debug)]
@@ -155,6 +175,9 @@ pub async fn start_ingress(
                 }
                 CentralEvent::GetPeers(oneshot) => {
                     let _ = hub_tx.send(KnotMessage::GetPeersNetwork(oneshot)).await;
+                }
+                CentralEvent::GetLocalPeerId(oneshot) => {
+                    let _ = hub_tx.send(KnotMessage::GetLocalPeerIdNetwork(oneshot)).await;
                 }
             }
         }

@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use bytes::BytesMut;
 use futures::{ SinkExt, StreamExt };
-use libp2p::{Multiaddr, PeerId};
+use libp2p::{ Multiaddr, PeerId };
 use tokio::io::{ AsyncReadExt, AsyncWriteExt };
 use tokio::net::TcpListener;
 use tokio::sync::{ mpsc, oneshot };
@@ -33,6 +33,22 @@ pub async fn start_managed_server(
                 // Deserialización directa al Enum
                 if let Ok(msg) = serde_json::from_str::<Message>(&linea) {
                     match msg {
+                        Message::Protocol => {
+                            let resp = ResponseTcp {
+                                command: "protocol".into(),
+                                response: "v0.1.0".into(),
+                                error: "".into(),
+                            };
+                            let _ = framed.send(serde_json::to_string(&resp).unwrap()).await;
+                        }
+                        Message::GetCommands => {
+                            let resp = ResponseTcp {
+                                command: "getcommands".into(),
+                                response: serde_json::to_string(&Message::command_list()).unwrap(),
+                                error: "".into(),
+                            };
+                            let _ = framed.send(serde_json::to_string(&resp).unwrap()).await;
+                        }
                         Message::Status => {
                             let resp = ResponseTcp {
                                 command: "status".into(),
@@ -111,15 +127,15 @@ pub async fn start_managed_server(
                                 Ok(peer_id) => peer_id,
                                 Err(err) => {
                                     let resp = ResponseTcp {
-                                            command: "discover".into(),
-                                            response: "".into(),
-                                            error: err.to_string(),
-                                        };
-                                        let _ = framed.send(
-                                            serde_json::to_string(&resp).unwrap()
-                                        ).await;
+                                        command: "discover".into(),
+                                        response: "".into(),
+                                        error: err.to_string(),
+                                    };
+                                    let _ = framed.send(
+                                        serde_json::to_string(&resp).unwrap()
+                                    ).await;
                                     return;
-                                },
+                                }
                             };
 
                             let (resp_tx, resp_rx) = oneshot::channel::<String>();
@@ -150,13 +166,38 @@ pub async fn start_managed_server(
                             let _ = framed.send(serde_json::to_string(&resp).unwrap()).await;
                         }
                         Message::GetPeers => {
-                            let (resp_tx, resp_rx) = oneshot::channel::<HashMap<PeerId, Vec<Multiaddr>>>();
+                            let (resp_tx, resp_rx) = oneshot::channel::<
+                                HashMap<PeerId, Vec<Multiaddr>>
+                            >();
 
                             let _ = tx_clone.send(CentralEvent::GetPeers(resp_tx)).await;
 
                             let response_from_core = resp_rx.await;
 
                             // 3. Respondemos al cliente TCP original
+                            let resp = match response_from_core {
+                                Ok(response) =>
+                                    ResponseTcp {
+                                        command: "getpeers".into(),
+                                        response: format!("{:?}", response),
+                                        error: "".into(),
+                                    },
+                                Err(_) =>
+                                    ResponseTcp {
+                                        command: "getpeers".into(),
+                                        response: "".into(),
+                                        error: "Core dropped the responder".into(),
+                                    },
+                            };
+                            let _ = framed.send(serde_json::to_string(&resp).unwrap()).await;
+                        }
+                        Message::GetPeerId => {
+                            let (resp_tx, resp_rx) = oneshot::channel::<PeerId>();
+
+                            let _ = tx_clone.send(CentralEvent::GetLocalPeerId(resp_tx)).await;
+
+                            let response_from_core = resp_rx.await;
+
                             let resp = match response_from_core {
                                 Ok(response) =>
                                     ResponseTcp {

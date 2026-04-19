@@ -9,7 +9,7 @@ use libp2p::{
     SwarmBuilder,
     Transport,
     identify,
-    identity::{self, Keypair},
+    identity::{ self, Keypair },
     kad,
     mdns,
     noise,
@@ -45,6 +45,7 @@ pub enum NetworkCommand {
         frame: Bytes,
     },
     GetPeers(tokio::sync::oneshot::Sender<HashMap<PeerId, Vec<Multiaddr>>>),
+    GetLocalPeer(tokio::sync::oneshot::Sender<PeerId>),
     DialAddress(libp2p::Multiaddr),
     LookupPeer(libp2p::PeerId, tokio::sync::oneshot::Sender<String>),
     ConnectRelay {
@@ -180,7 +181,8 @@ async fn run_network(
         })
         //.with_tcp(tcp::Config::default(), noise::Config::new, yamux::Config::default)?
         .with_other_transport(|key| {
-            tcp::tokio::Transport::new(tcp::Config::default())
+            tcp::tokio::Transport
+                ::new(tcp::Config::default())
                 .upgrade(libp2p::core::upgrade::Version::V1Lazy)
                 .authenticate(noise::Config::new(key).expect("Noise key generation failed"))
                 .multiplex(yamux::Config::default())
@@ -254,6 +256,9 @@ async fn run_network(
                     NetworkCommand::GetPeers(oneshot) => {
                         let list = peer_table.clone();
                         let _ = oneshot.send(list);
+                    }
+                    NetworkCommand::GetLocalPeer(oneshot) => {
+                        let _ = oneshot.send(local_peer_id);
                     }
                     NetworkCommand::DialAddress(addr) => {
                         println!("{}", addr);
