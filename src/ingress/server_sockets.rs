@@ -21,6 +21,8 @@ pub async fn start_managed_server(
     let listener = TcpListener::bind(format!("127.0.0.1:{}", port)).await?;
 
     println!("[Servidor {}] Started", port);
+    
+    let version = env!("CARGO_PKG_VERSION");
 
     loop {
         let (socket, _addr) = listener.accept().await?;
@@ -33,6 +35,14 @@ pub async fn start_managed_server(
                 // Deserialización directa al Enum
                 if let Ok(msg) = serde_json::from_str::<Message>(&linea) {
                     match msg {
+                        Message::Version => {
+                            let resp = ResponseTcp {
+                                command: "version".into(),
+                                response: version.to_string(),
+                                error: "".into(),
+                            };
+                            let _ = framed.send(serde_json::to_string(&resp).unwrap()).await;
+                        }
                         Message::Protocol => {
                             let resp = ResponseTcp {
                                 command: "protocol".into(),

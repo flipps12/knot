@@ -19,6 +19,7 @@ pub type ConnectionMap = Arc<Mutex<HashMap<u16, mpsc::Sender<Bytes>>>>;
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "command", rename_all = "snake_case")]
 pub enum Message {
+    Version,
     Protocol,
     #[serde(rename = "getcommands")] GetCommands,
     Status,
