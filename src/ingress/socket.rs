@@ -28,7 +28,7 @@ pub enum Message {
         port: u16,
     },
     Connect {
-        addr: String,
+        multiaddr: String,
     },
     Discover {
         peer_id: String,
