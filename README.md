@@ -1,7 +1,12 @@
 # Knot
 
-### Herramientas necesarias
-<a href="https://github.com/ImToru2/knot_cli">Knot-CLI</a>  <a href="https://github.com/flipps12/knot-relay">Knot-relay</a>
+## Tools
+<a href="https://github.com/flipps12/knot-cli">Knot-CLI</a> (In progress) <br>
+<a href="https://github.com/flipps12/knot-relay">Knot-relay</a> (In progress) <br>
+
+## SDK
+<a href="https://github.com/flipps12/rust-knot">rust-knot</a> (In progress) <br>
+<a href="https://github.com/flipps12/js-knot-server">ts/js-knot</a> (In progress) <br>
 
 ### Description
 
@@ -11,10 +16,3 @@ Knot is a peer-to-peer overlay network that enables direct communication between
 
 Use a daemon that recognizes and maintains open connections through hole punching and the QUIC and UDP protocols.
 
-### Technologies
-
-- Rust
-    - Libp2p
-    - Tokio
-- Unix & Tcp sockets
-- QUIC & UDP
