@@ -1,6 +1,5 @@
 // src/core/controllar.rs
 
-use libp2p::Multiaddr;
 use tokio::sync::mpsc::{Receiver, Sender};
 
 use crate::{
@@ -34,8 +33,8 @@ pub async fn start_core(
                         }).await;
                     }
                     KnotMessage::ConnectToNetwork { addr } => {
-                        let addr_parsed: Multiaddr = addr.parse().expect("Invalid Addr");
-                        let _ = to_net_tx.send(NetworkCommand::DialAddress(addr_parsed)).await;
+                        // let addr_parsed: Multiaddr = addr.parse().expect("Invalid Addr");
+                        let _ = to_net_tx.send(NetworkCommand::DialAddress(addr)).await;
                     }
                     KnotMessage::DiscoverNetwork { peerid, return_tx } => {
                         let _ = to_net_tx.send(NetworkCommand::LookupPeer(peerid, return_tx)).await;
