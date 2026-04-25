@@ -22,7 +22,7 @@ pub enum KnotMessage {
         frame: BinaryFrame,
     },
     ConnectToNetwork {
-        addr: String,
+        addr: Multiaddr,
     },
     DiscoverNetwork {
         peerid: PeerId,

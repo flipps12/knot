@@ -79,7 +79,23 @@ pub async fn start_managed_server(
                             let _ = framed.send(serde_json::to_string(&resp).unwrap()).await;
                         }
                         Message::Connect { multiaddr } => {
-                            let _ = tx_clone.send(CentralEvent::Connect { addr: multiaddr }).await;
+                            let parsed_addr = multiaddr.parse();
+                            let _ = tx_clone.send(CentralEvent::Connect { 
+                                addr: match parsed_addr {
+                                    Ok(parsed_addr) => parsed_addr,
+                                    Err(err) => {
+                                        let resp = ResponseTcp {
+                                            command: "connect".into(),
+                                            response: "".into(),
+                                            error: err.to_string(),
+                                        };
+                                    
+                                        let _ = framed.send(serde_json::to_string(&resp).unwrap()).await;
+                                        return;
+                                    }
+                                },
+                            }).await;
+
                             // let _ = framed.send("Connecting...").await;
 
                             let resp = ResponseTcp {

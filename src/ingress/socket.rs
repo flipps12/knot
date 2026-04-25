@@ -64,7 +64,7 @@ pub enum CentralEvent {
         port: u16,
     }, // save appid with a socekt port for redirect frames
     Connect {
-        addr: String,
+        addr: Multiaddr,
     }, // dial peer with address
     Discover {
         peerid: PeerId,
