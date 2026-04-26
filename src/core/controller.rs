@@ -1,17 +1,18 @@
 // src/core/controllar.rs
 
-use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::sync::mpsc::{ Receiver, Sender };
 
 use crate::{
     KnotMessage,
     ingress::socket::IngressCommand,
-    network::swarm::{NetworkCommand, NetworkResponse},
+    network::swarm::{ NetworkCommand, NetworkResponse },
+    utils::tou64::peer_id_to_u64,
 };
 
 pub async fn start_core(
     to_net_tx: Sender<NetworkCommand>,
     to_ing_tx: Sender<IngressCommand>,
-    mut hub_rx: Receiver<KnotMessage>,
+    mut hub_rx: Receiver<KnotMessage>
 ) {
     loop {
         tokio::select! {
@@ -48,9 +49,18 @@ pub async fn start_core(
                     KnotMessage::ConnectRelay { relay_addr, relay_peer_id} => {
                         let _ = to_net_tx.send(NetworkCommand::ConnectRelay { relay_addr, relay_peer_id }).await;
                     }
-                    KnotMessage::NetworkData { from_ip, frame } => {
+                    KnotMessage::NetworkData { peer, mut frame } => {
+                        let target_u64 = peer_id_to_u64(&peer);
+                        
+                        if frame.app_id == 0 {
+                            frame.app_id = 1;
+                            let _ = to_net_tx.send(NetworkCommand::SendFrame {
+                                target_u64,
+                                frame: frame.encode()
+                            }).await;
+                        }
+                        frame.peer_id = target_u64;
                         let _ = to_ing_tx.send(IngressCommand::SendFrameToClient {
-                            from_ip,
                             frame: frame.encode()
                         }).await;
                     }
