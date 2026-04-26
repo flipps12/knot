@@ -198,7 +198,7 @@ async fn run_network(
             // Identify
             let identify = identify::Behaviour::new(
                 identify::Config
-                    ::new("/knot/1.0.0".into(), key.public())
+                    ::new(format!("/knot/{}", env!("CARGO_PKG_VERSION")), key.public())
                     .with_interval(Duration::from_secs(60))
             );
 
@@ -456,9 +456,8 @@ async fn handle_behaviour_event(
                 let payload = request.raw.slice(24..);
 
                 let frame = BinaryFrame::from_raw(&header, payload);
-                let from_ip = peer.to_string();
 
-                let _ = hub_tx.send(KnotMessage::NetworkData { from_ip, frame }).await;
+                let _ = hub_tx.send(KnotMessage::NetworkData { peer, frame }).await;
             } else {
                 eprintln!("[Network] Frame recibido demasiado corto");
             }

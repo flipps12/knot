@@ -91,7 +91,6 @@ pub struct ResponseTcp {
 
 pub enum IngressCommand {
     SendFrameToClient {
-        from_ip: String,
         frame: Bytes,
     },
 }
@@ -115,7 +114,7 @@ pub async fn start_ingress(
     tokio::spawn(async move {
         while let Some(event) = rx.recv().await {
             match event {
-                IngressCommand::SendFrameToClient { from_ip, frame } => {
+                IngressCommand::SendFrameToClient { frame } => {
                     let buf = BytesMut::from(&frame[..]);
                     if buf.len() < 24 {
                         eprintln!("Error: El frame es demasiado corto para el encabezado de Knot");
@@ -133,7 +132,7 @@ pub async fn start_ingress(
                             decoded_frame.payload
                         ).await;
                     } else {
-                        println!("  -> AppID {} not registered from {}.", app_id, from_ip);
+                        println!("  -> AppID {} not registered", app_id);
                     }
                 }
             }

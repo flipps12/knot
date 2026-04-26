@@ -34,9 +34,8 @@ pub enum KnotMessage {
         relay_addr: Multiaddr,
         relay_peer_id: PeerId,
     },
-    // Del Network al Core: "Recibí algo del P2P"
     NetworkData {
-        from_ip: String,
+        peer: PeerId,
         frame: BinaryFrame,
     },
     NetworkResponse(NetworkResponse),
