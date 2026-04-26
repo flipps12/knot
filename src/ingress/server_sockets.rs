@@ -12,7 +12,6 @@ use tokio_util::codec::{ Framed, LinesCodec };
 
 use crate::ingress::socket::{ CentralEvent, Message, ResponseTcp };
 use crate::utils::framing::BinaryFrame;
-use crate::utils::tou64::string_to_u64_rust;
 
 pub async fn start_managed_server(
     central_tx: mpsc::Sender<CentralEvent>,
@@ -67,8 +66,7 @@ pub async fn start_managed_server(
                             };
                             let _ = framed.send(serde_json::to_string(&resp).unwrap()).await;
                         }
-                        Message::Register { name, port } => {
-                            let app_id = string_to_u64_rust(&name);
+                        Message::Register { app_id, port } => {
                             let _ = tx_clone.send(CentralEvent::Register { app_id, port }).await;
                             // let _ = framed.send(format!("OK: Registered ID {}", app_id)).await;
                             let resp = ResponseTcp {
