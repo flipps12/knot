@@ -10,10 +10,10 @@ pub fn peer_id_to_u64(peer_id: &libp2p::PeerId) -> u64 {
     u64::from_be_bytes(arr)
 }
 
-pub fn string_to_u64_rust(text: &str) -> u64 {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    let mut s = DefaultHasher::new();
-    text.hash(&mut s);
-    s.finish()
-}
+// pub fn string_to_u64_rust(text: &str) -> u64 {
+//     use std::collections::hash_map::DefaultHasher;
+//     use std::hash::{Hash, Hasher};
+//     let mut s = DefaultHasher::new();
+//     text.hash(&mut s);
+//     s.finish()
+// }

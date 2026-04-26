@@ -23,8 +23,8 @@ pub enum Message {
     Protocol,
     #[serde(rename = "getcommands")] GetCommands,
     Status,
-    #[serde(rename = "newappname")] Register {
-        name: String,
+    #[serde(rename = "register")] Register {
+        app_id: u64,
         port: u16,
     },
     Connect {
@@ -44,10 +44,11 @@ pub enum Message {
 impl Message {
     pub fn command_list() -> Vec<&'static str> {
         vec![
+            "version",
             "protocol",
             "getcommands",
             "status",
-            "newappname",
+            "register",
             "connect",
             "discover",
             "connectrelay",
