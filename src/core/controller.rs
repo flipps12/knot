@@ -58,11 +58,12 @@ pub async fn start_core(
                                 target_u64,
                                 frame: frame.encode()
                             }).await;
+                        } else {
+                            frame.peer_id = target_u64;
+                            let _ = to_ing_tx.send(IngressCommand::SendFrameToClient {
+                                frame: frame.encode()
+                            }).await;
                         }
-                        frame.peer_id = target_u64;
-                        let _ = to_ing_tx.send(IngressCommand::SendFrameToClient {
-                            frame: frame.encode()
-                        }).await;
                     }
                     KnotMessage::NetworkResponse(response) => {
                         match response {
