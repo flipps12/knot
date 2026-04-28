@@ -1,7 +1,7 @@
 // src/network/swarm.rs
 
 use async_trait::async_trait;
-use bytes::{ Bytes, BytesMut };
+use bytes::Bytes;
 use futures::StreamExt;
 use libp2p::{
     Multiaddr,
@@ -42,7 +42,7 @@ pub struct FrameResponse {
 pub enum NetworkCommand {
     SendFrame {
         target_u64: u64,
-        frame: Bytes,
+        frame: BinaryFrame,
     },
     GetPeers(tokio::sync::oneshot::Sender<HashMap<PeerId, Vec<Multiaddr>>>),
     GetLocalPeer(tokio::sync::oneshot::Sender<PeerId>),
@@ -77,13 +77,10 @@ impl request_response::Codec for FrameCodec {
         io.read_exact(&mut len_buf).await?;
         let len = u32::from_be_bytes(len_buf) as usize;
 
-        let mut buf = BytesMut::with_capacity(len);
-        buf.resize(len, 0);
-
+        let mut buf = vec![0u8; len];
         io.read_exact(&mut buf).await?;
-        Ok(FrameRequest {
-            raw: Bytes::from(buf),
-        })
+
+        Ok(FrameRequest { raw: Bytes::from(buf) })
     }
 
     async fn read_response<T>(&mut self, _: &String, io: &mut T) -> std::io::Result<Self::Response>
@@ -251,7 +248,8 @@ async fn run_network(
             Some(cmd) = command_rx.recv() => {
                 match cmd {
                     NetworkCommand::SendFrame { target_u64, frame } => {
-                        handle_outbound_by_u64(&mut swarm, &peer_table, target_u64, frame);
+                        let raw_bytes = frame.encode();
+                        handle_outbound_by_u64(&mut swarm, &peer_table, target_u64, raw_bytes);
                     }
                     NetworkCommand::GetPeers(oneshot) => {
                         let list = peer_table.clone();
@@ -453,9 +451,10 @@ async fn handle_behaviour_event(
                 header.copy_from_slice(&request.raw[..24]);
 
                 // El payload es un slice de Bytes (Zero-Copy)
-                let payload = request.raw.slice(24..);
+                // let payload = request.raw.slice(24..);
+                // let frame = BinaryFrame::from_raw(&header, payload);
 
-                let frame = BinaryFrame::from_raw(&header, payload);
+                let frame = BinaryFrame::decode(request.raw.into());
 
                 let _ = hub_tx.send(KnotMessage::NetworkData { peer, frame }).await;
             } else {

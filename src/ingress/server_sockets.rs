@@ -303,7 +303,7 @@ pub async fn start_binary_data_server(
                 if
                     tx
                         .send(CentralEvent::RouteBinary {
-                            from_ip: addr.to_string(),
+                            //from_ip: addr.to_string(),
                             frame,
                         }).await
                         .is_err()
