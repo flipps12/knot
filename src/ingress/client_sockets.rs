@@ -19,26 +19,46 @@ pub async fn send_to_local_app(connections: ConnectionMap, port: u16, data: Byte
         lock.remove(&port);
     }
 
-    // 2. Si no hay conexión o falló, abrimos una nueva
-    match TcpStream::connect(format!("127.0.0.1:{}", port)).await {
+    let socket_result = connect_to_app(port).await;
+
+    match socket_result {
         Ok(mut stream) => {
             let (tx, mut rx) = mpsc::channel::<Bytes>(100);
-
-            // Guardamos el canal en el mapa antes de lanzar el hilo
             lock.insert(port, tx.clone());
 
-            // Tarea de fondo: Escribe en el socket mientras el canal reciba datos
+            // Tarea de fondo: Genérica para cualquier transporte
             tokio::spawn(async move {
                 while let Some(payload) = rx.recv().await {
-                    if let Err(_) = stream.write_all(&payload).await {
+                    // Aquí payload es Bytes, el write_all es eficiente (Zero-copy al kernel)
+                    if stream.write_all(&payload).await.is_err() {
                         break;
                     }
                 }
             });
 
-            // Enviamos el primer paquete (el que disparó la conexión)
-            let _ = lock.get(&port).unwrap().send(data).await;
+            let _ = tx.send(data).await;
         }
-        Err(e) => eprintln!("[Error] No se pudo conectar al puerto {}: {}", port, e),
+        Err(e) => eprintln!("[Error] Fallo de conexión a App (puerto/path {}): {}", port, e),
     }
+}
+
+async fn connect_to_app(port: u16) -> Result<Box<dyn tokio::io::AsyncWrite + Send + Unpin>, std::io::Error> {
+    let force_tcp = std::env::var("KNOT_DEBUG_TCP").is_ok();
+
+    #[cfg(unix)]
+    {
+        if !force_tcp {
+            let path = format!("/tmp/knot_app_{}.sock", port);
+            if std::path::Path::new(&path).exists() {
+                use tokio::net::UnixStream;
+
+                let stream = UnixStream::connect(path).await?;
+                return Ok(Box::new(stream) as Box<dyn tokio::io::AsyncWrite + Send + Unpin>);
+            }
+        }
+    }
+
+    // Fallback a TCP
+    let stream = TcpStream::connect(format!("127.0.0.1:{}", port)).await?;
+    Ok(Box::new(stream) as Box<dyn tokio::io::AsyncWrite + Send + Unpin>)
 }
