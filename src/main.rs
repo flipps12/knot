@@ -18,7 +18,7 @@ use tokio::sync::mpsc;
 pub enum KnotMessage {
     // De Ingress al Core: "Tengo datos de un cliente"
     ClientData {
-        from_ip: String,
+        // from_ip: String,
         frame: BinaryFrame,
     },
     ConnectToNetwork {

@@ -18,10 +18,7 @@ pub async fn start_core(
         tokio::select! {
             Some(message) = hub_rx.recv() => {
                 match message {
-                    KnotMessage::ClientData { from_ip: _, frame } => {
-
-
-
+                    KnotMessage::ClientData { frame } => {
                         let target_u64 = frame.peer_id;
 
                         #[cfg(debug_assertions)]
@@ -30,7 +27,7 @@ pub async fn start_core(
                         // 3. Enviamos el comando a la red
                         let _ = to_net_tx.send(NetworkCommand::SendFrame {
                             target_u64,
-                            frame: frame.encode()
+                            frame
                         }).await;
                     }
                     KnotMessage::ConnectToNetwork { addr } => {
@@ -51,17 +48,18 @@ pub async fn start_core(
                     }
                     KnotMessage::NetworkData { peer, mut frame } => {
                         let target_u64 = peer_id_to_u64(&peer);
-                        
-                        if frame.app_id == 0 {
+                        let app_id = frame.app_id;
+                        if app_id == 0 {
                             frame.app_id = 1;
                             let _ = to_net_tx.send(NetworkCommand::SendFrame {
                                 target_u64,
-                                frame: frame.encode()
+                                frame
                             }).await;
                         } else {
                             frame.peer_id = target_u64;
                             let _ = to_ing_tx.send(IngressCommand::SendFrameToClient {
-                                frame: frame.encode()
+                                frame,
+                                app_id,
                             }).await;
                         }
                     }

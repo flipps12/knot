@@ -261,7 +261,7 @@ pub async fn start_binary_data_server(
     println!("[Servidor {}] Ingress Binario started", port);
 
     loop {
-        let (mut socket, addr) = listener.accept().await?;
+        let (mut socket, _) = listener.accept().await?;
         let tx = central_tx.clone();
 
         tokio::spawn(async move {
@@ -292,7 +292,7 @@ pub async fn start_binary_data_server(
 
                 // 5. Logs solo en modo DEBUG (No afectan al benchmark --release)
                 #[cfg(debug_assertions)]
-                println!("[Ingress] Data de {} para ID: {}", addr, frame.peer_id);
+                println!("[Ingress] Data for ID: {}", frame.peer_id);
 
                 // For benchmark only
                 if socket.write_u8(1).await.is_err() {
@@ -303,7 +303,7 @@ pub async fn start_binary_data_server(
                 if
                     tx
                         .send(CentralEvent::RouteBinary {
-                            from_ip: addr.to_string(),
+                            //from_ip: addr.to_string(),
                             frame,
                         }).await
                         .is_err()
