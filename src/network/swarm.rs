@@ -46,6 +46,7 @@ pub enum NetworkCommand {
     },
     GetPeers(tokio::sync::oneshot::Sender<HashMap<PeerId, Vec<Multiaddr>>>),
     GetLocalPeer(tokio::sync::oneshot::Sender<PeerId>),
+    GetListeners(tokio::sync::oneshot::Sender<Vec<Multiaddr>>),
     DialAddress(libp2p::Multiaddr),
     LookupPeer(libp2p::PeerId, tokio::sync::oneshot::Sender<String>),
     ConnectRelay {
@@ -257,6 +258,9 @@ async fn run_network(
                     }
                     NetworkCommand::GetLocalPeer(oneshot) => {
                         let _ = oneshot.send(local_peer_id);
+                    }
+                    NetworkCommand::GetListeners(oneshot) => {
+                        let _ = oneshot.send(swarm.listeners().cloned().collect());
                     }
                     NetworkCommand::DialAddress(addr) => {
                         println!("{}", addr);

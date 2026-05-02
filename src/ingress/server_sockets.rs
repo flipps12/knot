@@ -251,6 +251,30 @@ async fn handle_managed_connection<S>(socket: S, central_tx: mpsc::Sender<Centra
                     };
                     let _ = framed.send(serde_json::to_string(&resp).unwrap()).await;
                 }
+                Message::Listeners => {
+                    let (resp_tx, resp_rx) = oneshot::channel::<Vec<Multiaddr>>();
+
+                    let _ = central_tx.send(CentralEvent::Listeners(resp_tx)).await;
+
+                    let response_from_core = resp_rx.await;
+
+                    // 3. Respondemos al cliente TCP original
+                    let resp = match response_from_core {
+                        Ok(response) =>
+                            ResponseTcp {
+                                command: "listeners".into(),
+                                response: format!("{:?}", response),
+                                error: "".into(),
+                            },
+                        Err(_) =>
+                            ResponseTcp {
+                                command: "listeners".into(),
+                                response: "".into(),
+                                error: "Core dropped the responder".into(),
+                            },
+                    };
+                    let _ = framed.send(serde_json::to_string(&resp).unwrap()).await;
+                }
                 // _ => {
                 //     let resp = ResponseTcp {
                 //         command: "server".into(),

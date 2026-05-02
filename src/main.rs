@@ -30,6 +30,7 @@ pub enum KnotMessage {
     },
     GetPeersNetwork(tokio::sync::oneshot::Sender<HashMap<PeerId, Vec<Multiaddr>>>),
     GetLocalPeerIdNetwork(tokio::sync::oneshot::Sender<PeerId>),
+    GetListeners(tokio::sync::oneshot::Sender<Vec<Multiaddr>>),
     ConnectRelay {
         relay_addr: Multiaddr,
         relay_peer_id: PeerId,

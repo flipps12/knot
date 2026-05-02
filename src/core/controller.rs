@@ -42,6 +42,8 @@ pub async fn start_core(
                     }
                     KnotMessage::GetLocalPeerIdNetwork(oneshot) => {
                         let _ = to_net_tx.send(NetworkCommand::GetLocalPeer(oneshot)).await;
+                    }KnotMessage::GetListeners(oneshot) => {
+                        let _ = to_net_tx.send(NetworkCommand::GetListeners(oneshot)).await;
                     }
                     KnotMessage::ConnectRelay { relay_addr, relay_peer_id} => {
                         let _ = to_net_tx.send(NetworkCommand::ConnectRelay { relay_addr, relay_peer_id }).await;

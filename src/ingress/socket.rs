@@ -23,6 +23,7 @@ pub enum Message {
     Protocol,
     #[serde(rename = "getcommands")] GetCommands,
     Status,
+    Listeners,
     #[serde(rename = "register")] Register {
         app_id: u64,
         port: u16,
@@ -81,6 +82,7 @@ pub enum CentralEvent {
     },
     GetPeers(tokio::sync::oneshot::Sender<HashMap<PeerId, Vec<Multiaddr>>>),
     GetLocalPeerId(tokio::sync::oneshot::Sender<PeerId>),
+    Listeners(tokio::sync::oneshot::Sender<Vec<Multiaddr>>),
 }
 
 #[derive(Serialize, Debug)]
@@ -162,6 +164,7 @@ pub async fn start_ingress(
                     let _ = hub_tx.send(KnotMessage::ClientData { frame }).await;
                 }
                 CentralEvent::ConnectRelay { relay_addr, relay_peer_id } => {
+                    println!("[Ingress] Sending ConnectRelay command to [Network]: {} - {}", relay_addr, relay_peer_id);
                     let _ = hub_tx.send(KnotMessage::ConnectRelay {
                         relay_addr,
                         relay_peer_id,
@@ -172,6 +175,9 @@ pub async fn start_ingress(
                 }
                 CentralEvent::GetLocalPeerId(oneshot) => {
                     let _ = hub_tx.send(KnotMessage::GetLocalPeerIdNetwork(oneshot)).await;
+                }
+                CentralEvent::Listeners(oneshot) => {
+                    let _ = hub_tx.send(KnotMessage::GetListeners(oneshot)).await;
                 }
             }
         }
