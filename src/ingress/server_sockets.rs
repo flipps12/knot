@@ -238,13 +238,13 @@ async fn handle_managed_connection<S>(socket: S, central_tx: mpsc::Sender<Centra
                     let resp = match response_from_core {
                         Ok(response) =>
                             ResponseTcp {
-                                command: "getpeers".into(),
+                                command: "getpeerid".into(),
                                 response: format!("{:?}", response),
                                 error: "".into(),
                             },
                         Err(_) =>
                             ResponseTcp {
-                                command: "getpeers".into(),
+                                command: "getpeerid".into(),
                                 response: "".into(),
                                 error: "Core dropped the responder".into(),
                             },
